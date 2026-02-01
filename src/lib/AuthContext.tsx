@@ -39,11 +39,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { signIn, signOut } = useAuthActions();
 
+  // Debug logging
+  console.log("[AuthContext] useConvexAuth:", { isLoading, isAuthenticated });
+
   // Only query currentUser when authenticated
   const currentUser = useQuery(
     api.users.currentUser,
     isAuthenticated ? {} : "skip"
   );
+
+  console.log("[AuthContext] currentUser:", currentUser);
 
   const handleSignIn = async (provider: "google") => {
     await signIn(provider, { redirectTo: "/" });

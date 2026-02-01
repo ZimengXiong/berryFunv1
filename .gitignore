@@ -36,3 +36,5 @@ dist-ssr
 *.key
 credentials.json
 secrets.json
+.vercel
+.env*.local

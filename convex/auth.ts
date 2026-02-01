@@ -9,7 +9,7 @@ const ADMIN_EMAILS = [
   "phonica@gmail.com",
 ];
 
-export const { auth, signIn, signOut, store } = convexAuth({
+export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: [
     Google({
       authorization: {
