@@ -35,47 +35,6 @@ export function Home() {
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">
-            Why Choose Berry Fun Camp?
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="text-center p-6">
-              <div className="text-5xl mb-4">🏕️</div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                Exciting Activities
-              </h3>
-              <p className="text-gray-600">
-                From outdoor adventures to creative arts, every day brings new
-                discoveries and fun experiences.
-              </p>
-            </div>
-            <div className="text-center p-6">
-              <div className="text-5xl mb-4">👨‍👩‍👧‍👦</div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                Experienced Staff
-              </h3>
-              <p className="text-gray-600">
-                Our trained counselors ensure a safe, supportive environment
-                where every child can thrive.
-              </p>
-            </div>
-            <div className="text-center p-6">
-              <div className="text-5xl mb-4">💰</div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                Great Value
-              </h3>
-              <p className="text-gray-600">
-                Multi-week discounts, sibling savings, and early bird specials
-                make camp accessible for everyone.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* Discounts Section */}
       <section className="py-20 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
