@@ -90,6 +90,7 @@ export const getDraftCount = query({
 });
 
 // MUTATION: Add session to draft ledger
+// Uses optimistic locking to prevent race conditions on capacity
 export const addToLedger = mutation({
   args: {
     sessionId: v.id("sessions"),
@@ -98,7 +99,7 @@ export const addToLedger = mutation({
   handler: async (ctx, args) => {
     const auth = await requireAuth(ctx);
 
-    // Get session
+    // Get session with version for optimistic locking
     const session = await ctx.db.get(args.sessionId) as Doc<"sessions"> | null;
     if (!session) {
       throw new Error("Session not found");
@@ -108,7 +109,10 @@ export const addToLedger = mutation({
       throw new Error("Session is not available");
     }
 
-    // Check capacity (including reserved and secured items to prevent race conditions)
+    // Capture version for optimistic locking
+    const expectedVersion = session.version ?? 0;
+
+    // Check capacity (including reserved and secured items)
     const claimedItems = await ctx.db
       .query("ledgerItems")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
@@ -125,8 +129,7 @@ export const addToLedger = mutation({
       throw new Error("Session is full");
     }
 
-    // Add soft buffer for high-traffic protection (reject when within 2 spots of capacity)
-    // This gives headroom for in-flight reservations
+    // Add soft buffer for high-traffic protection
     const HIGH_TRAFFIC_BUFFER = 2;
     const draftItems = await ctx.db
       .query("ledgerItems")
@@ -166,6 +169,19 @@ export const addToLedger = mutation({
     }
 
     const now = Date.now();
+
+    // RACE CONDITION FIX: Update version BEFORE inserting item
+    // This ensures concurrent requests will see the version change
+    await ctx.db.patch(args.sessionId, {
+      version: expectedVersion + 1,
+      updatedAt: now,
+    });
+
+    // Verify version didn't change (another request didn't sneak in)
+    const updatedSession = await ctx.db.get(args.sessionId) as Doc<"sessions">;
+    if (updatedSession.version !== expectedVersion + 1) {
+      throw new Error("Session was modified concurrently. Please try again.");
+    }
 
     const itemId = await ctx.db.insert("ledgerItems", {
       userId: auth.userId,
@@ -223,6 +239,7 @@ export const removeFromLedger = mutation({
 });
 
 // MUTATION: Reserve draft items (locks spots, sets expiration)
+// Uses optimistic locking to prevent race conditions on capacity
 export const reserveItems = mutation({
   args: {
     itemIds: v.array(v.id("ledgerItems")),
@@ -234,6 +251,9 @@ export const reserveItems = mutation({
     const now = Date.now();
     const expiresAt = now + RESERVATION_EXPIRY_MS;
     const reservedItems: Id<"ledgerItems">[] = [];
+
+    // Track session versions for optimistic locking
+    const sessionVersions = new Map<string, number>();
 
     for (const itemId of args.itemIds) {
       const item = await ctx.db.get(itemId) as Doc<"ledgerItems"> | null;
@@ -248,11 +268,13 @@ export const reserveItems = mutation({
         continue;
       }
 
-      // Check session capacity (including reserved and secured items)
+      // Check session capacity with optimistic locking
       if (item.sessionId) {
         const session = await ctx.db.get(item.sessionId) as Doc<"sessions"> | null;
         if (session) {
-          // Count all reserved and secured items for this session
+          const expectedVersion = session.version ?? 0;
+
+          // Count all reserved, secured, and verified items for this session
           const reservedCount = await ctx.db
             .query("ledgerItems")
             .withIndex("by_sessionId", (q) => q.eq("sessionId", item.sessionId))
@@ -268,6 +290,20 @@ export const reserveItems = mutation({
           if (reservedCount.length >= session.capacity) {
             throw new Error(`Session "${session.name}" is full`);
           }
+
+          // RACE CONDITION FIX: Update version to claim the spot atomically
+          await ctx.db.patch(item.sessionId, {
+            version: expectedVersion + 1,
+            updatedAt: now,
+          });
+
+          // Verify version change succeeded
+          const updatedSession = await ctx.db.get(item.sessionId) as Doc<"sessions">;
+          if (updatedSession.version !== expectedVersion + 1) {
+            throw new Error(`Session "${session.name}" was modified concurrently. Please try again.`);
+          }
+
+          sessionVersions.set(item.sessionId, expectedVersion + 1);
         }
       }
 

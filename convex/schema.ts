@@ -93,6 +93,8 @@ export default defineSchema({
     imageStorageId: v.optional(v.id("_storage")),
     isActive: v.boolean(),
     earlyBirdDeadline: v.optional(v.number()),
+    // Optimistic locking version for race condition prevention
+    version: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -212,6 +214,11 @@ export default defineSchema({
     maxUses: v.optional(v.number()),
     currentUses: v.number(),
     expiresAt: v.optional(v.number()),
+
+    // Optimistic locking version for race condition prevention
+    version: v.optional(v.number()),
+    // Claim token for atomic claim verification
+    claimToken: v.optional(v.string()),
 
     createdBy: v.optional(v.id("users")),
     createdAt: v.number(),

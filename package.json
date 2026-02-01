@@ -9,7 +9,9 @@
     "dev:backend": "convex dev",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:race-sim": "npx tsx tests/load-testing/race-simulation.ts",
+    "test:race-live": "npx tsx tests/load-testing/race-condition-test.ts"
   },
   "dependencies": {
     "@auth/core": "^0.37.4",

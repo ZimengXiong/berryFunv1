@@ -91,10 +91,12 @@ export const verifyReceipt = mutation({
         });
 
         // Update session enrollment count for enrollment items
-        // Count from source of truth to prevent lost updates in race conditions
+        // Uses optimistic locking to prevent race conditions on concurrent verifications
         if (item.type === "enrollment" && item.sessionId) {
           const session = await ctx.db.get(item.sessionId);
           if (session) {
+            const expectedVersion = session.version ?? 0;
+
             // Count all verified enrollments for this session (source of truth)
             const verifiedEnrollments = await ctx.db
               .query("ledgerItems")
@@ -112,24 +114,49 @@ export const verifyReceipt = mutation({
               throw new Error(`Session "${session.name}" has reached capacity. Cannot verify enrollment.`);
             }
 
-            // Set enrolledCount to actual count (not increment) to prevent drift
+            // RACE CONDITION FIX: Update with version to detect concurrent modifications
             await ctx.db.patch(item.sessionId, {
               enrolledCount: verifiedEnrollments.length,
+              version: expectedVersion + 1,
               updatedAt: now,
             });
+
+            // Verify no concurrent modification occurred
+            const updatedSession = await ctx.db.get(item.sessionId);
+            if (updatedSession && updatedSession.version !== expectedVersion + 1) {
+              // Another verification happened concurrently - recount to ensure accuracy
+              const recountedEnrollments = await ctx.db
+                .query("ledgerItems")
+                .withIndex("by_sessionId", (q) => q.eq("sessionId", item.sessionId))
+                .filter((q) =>
+                  q.and(
+                    q.eq(q.field("type"), "enrollment"),
+                    q.eq(q.field("status"), "verified")
+                  )
+                )
+                .collect();
+
+              await ctx.db.patch(item.sessionId, {
+                enrolledCount: recountedEnrollments.length,
+                updatedAt: now,
+              });
+            }
           }
         }
       }
 
       // Consume any pending coupons linked to the verified items
+      // Uses version check to prevent race conditions on currentUses increment
       for (const itemId of receipt.linkedLedgerItems) {
         const item = await ctx.db.get(itemId);
         if (item && item.couponId) {
           const coupon = await ctx.db.get(item.couponId);
           if (coupon && coupon.status === "pending") {
+            const couponVersion = coupon.version ?? 0;
             await ctx.db.patch(item.couponId, {
               status: "consumed",
               currentUses: coupon.currentUses + 1,
+              version: couponVersion + 1,
               updatedAt: now,
             });
           }

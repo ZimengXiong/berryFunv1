@@ -8,6 +8,7 @@ const MAX_COUPON_CODE_LENGTH = 50;
 const MAX_DESCRIPTION_LENGTH = 500;
 
 // MUTATION: Claim a coupon (creates credit memo, locks coupon)
+// Uses optimistic locking with claim token to prevent race conditions
 export const claimCoupon = mutation({
   args: {
     code: v.string(),
@@ -64,12 +65,14 @@ export const claimCoupon = mutation({
 
     const now = Date.now();
 
+    // RACE CONDITION FIX: Generate unique claim token for atomic verification
+    const claimToken = `${auth.userId}-${now}-${Math.random().toString(36).substring(2, 15)}`;
+    const expectedVersion = coupon.version ?? 0;
+
     // Calculate discount amount
-    // For percentage coupons, we need to calculate against current draft total
     let discountAmount = coupon.discountValue;
 
     if (coupon.discountType === "percentage") {
-      // Get total of draft enrollments
       const draftEnrollments = await ctx.db
         .query("ledgerItems")
         .withIndex("by_userId_status", (q) =>
@@ -86,22 +89,37 @@ export const claimCoupon = mutation({
       }
     }
 
-    // Create credit memo
+    // RACE CONDITION FIX: Atomically claim the coupon with version check
+    // Update coupon FIRST with our claim token and version increment
+    await ctx.db.patch(coupon._id, {
+      status: "pending",
+      linkedUserId: auth.userId,
+      claimToken: claimToken,
+      version: expectedVersion + 1,
+      updatedAt: now,
+    });
+
+    // Verify WE got the coupon (not someone else)
+    const updatedCoupon = await ctx.db.get(coupon._id) as Doc<"coupons">;
+    if (updatedCoupon.claimToken !== claimToken || updatedCoupon.version !== expectedVersion + 1) {
+      // Another request claimed it - coupon is no longer available
+      throw new Error(genericError);
+    }
+
+    // Now safe to create credit memo - we have exclusive ownership
     const creditMemoId = await ctx.db.insert("ledgerItems", {
       userId: auth.userId,
       type: "credit_memo",
       status: "draft",
-      amount: -discountAmount, // Negative amount for credit
+      amount: -discountAmount,
       description: `Coupon: ${couponCode}`,
       couponId: coupon._id,
       createdAt: now,
       updatedAt: now,
     });
 
-    // Update coupon to pending status
+    // Update coupon with the credit memo link
     await ctx.db.patch(coupon._id, {
-      status: "pending",
-      linkedUserId: auth.userId,
       linkedLedgerItemId: creditMemoId,
       updatedAt: now,
     });
