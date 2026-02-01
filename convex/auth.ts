@@ -10,7 +10,15 @@ const ADMIN_EMAILS = [
 ];
 
 export const { auth, signIn, signOut, store } = convexAuth({
-  providers: [Google],
+  providers: [
+    Google({
+      authorization: {
+        params: {
+          prompt: "select_account",
+        },
+      },
+    }),
+  ],
   callbacks: {
     async createOrUpdateUser(ctx, args) {
       if (args.existingUserId) {

@@ -41,7 +41,7 @@ function AuthProviderInner({ children }: { children: ReactNode }) {
   const currentUser = useQuery(api.users.currentUser);
 
   const handleSignIn = async (provider: "google") => {
-    await signIn(provider);
+    await signIn(provider, { redirectTo: "/" });
   };
 
   const handleSignOut = async () => {
@@ -83,7 +83,7 @@ function AuthProviderLoading({ children }: { children: ReactNode }) {
   const { signIn, signOut } = useAuthActions();
 
   const handleSignIn = async (provider: "google") => {
-    await signIn(provider);
+    await signIn(provider, { redirectTo: "/" });
   };
 
   const handleSignOut = async () => {
@@ -111,7 +111,7 @@ function AuthProviderUnauthenticated({ children }: { children: ReactNode }) {
   const { signIn, signOut } = useAuthActions();
 
   const handleSignIn = async (provider: "google") => {
-    await signIn(provider);
+    await signIn(provider, { redirectTo: "/" });
   };
 
   const handleSignOut = async () => {
