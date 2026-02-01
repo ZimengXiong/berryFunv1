@@ -10,11 +10,11 @@ interface CouponFormProps {
 }
 
 export function CouponForm({ couponId }: CouponFormProps) {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const existingCoupon = useQuery(
     api.coupons.getCoupon,
-    couponId && token ? { token, couponId } : "skip"
+    couponId && isAuthenticated ? { couponId } : "skip"
   );
 
   const createCoupon = useMutation(api.coupons.createCoupon);
@@ -57,7 +57,7 @@ export function CouponForm({ couponId }: CouponFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token) return;
+    if (!isAuthenticated) return;
 
     setError("");
     setIsLoading(true);
@@ -65,7 +65,6 @@ export function CouponForm({ couponId }: CouponFormProps) {
     try {
       if (couponId) {
         await updateCoupon({
-          token,
           couponId,
           discountValue: parseFloat(formData.discountValue),
           maxUses: formData.maxUses ? parseInt(formData.maxUses) : undefined,
@@ -76,7 +75,6 @@ export function CouponForm({ couponId }: CouponFormProps) {
         });
       } else {
         await createCoupon({
-          token,
           code: formData.code.toUpperCase(),
           discountValue: parseFloat(formData.discountValue),
           discountType: formData.discountType,
@@ -97,11 +95,11 @@ export function CouponForm({ couponId }: CouponFormProps) {
   };
 
   const handleDisable = async () => {
-    if (!token || !couponId) return;
+    if (!isAuthenticated || !couponId) return;
     if (!confirm("Are you sure you want to disable this coupon?")) return;
 
     try {
-      await disableCoupon({ token, couponId });
+      await disableCoupon({ couponId });
       navigate("/admin/coupons");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disable coupon");

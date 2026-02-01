@@ -7,8 +7,8 @@ interface ProfileViewProps {
 }
 
 export function ProfileView({ onEdit }: ProfileViewProps) {
-  const { token } = useAuth();
-  const profile = useQuery(api.users.getProfile, token ? { token } : "skip");
+  const { isAuthenticated } = useAuth();
+  const profile = useQuery(api.users.getProfile, isAuthenticated ? {} : "skip");
 
   if (!profile) {
     return (

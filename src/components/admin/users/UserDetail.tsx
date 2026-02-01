@@ -10,9 +10,9 @@ interface UserDetailProps {
 }
 
 export function UserDetail({ userId }: UserDetailProps) {
-  const { token } = useAuth();
-  const user = useQuery(api.users.getUser, token ? { token, userId } : "skip");
-  const balance = useQuery(api.deltaEngine.calculateUserBalance, token ? { token, userId } : "skip");
+  const { isAuthenticated } = useAuth();
+  const user = useQuery(api.users.getUser, isAuthenticated ? { userId } : "skip");
+  const balance = useQuery(api.deltaEngine.calculateUserBalance, isAuthenticated ? { userId } : "skip");
   const updateUser = useMutation(api.users.updateUser);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -42,10 +42,9 @@ export function UserDetail({ userId }: UserDetailProps) {
   };
 
   const handleSave = async () => {
-    if (!token) return;
+    if (!isAuthenticated) return;
 
     await updateUser({
-      token,
       userId,
       firstName: formData.firstName,
       lastName: formData.lastName,

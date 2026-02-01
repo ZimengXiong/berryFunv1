@@ -1,44 +1,19 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
-
-// Helper to get authenticated user
-async function getAuthenticatedUser(
-  ctx: { db: any },
-  token: string
-): Promise<Id<"users"> | null> {
-  const session = await ctx.db
-    .query("authSessions")
-    .withIndex("by_token", (q: any) => q.eq("token", token))
-    .first();
-
-  if (!session || session.expiresAt < Date.now()) {
-    return null;
-  }
-
-  const user = await ctx.db.get(session.userId);
-  if (!user || !user.isActive) {
-    return null;
-  }
-
-  return user._id;
-}
+import { requireAuth } from "./authHelpers";
 
 // QUERY: Get all children for current user
 export const getChildren = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    const userId = await getAuthenticatedUser(ctx, args.token);
-    if (!userId) {
-      throw new Error("Not authenticated");
-    }
+  args: {},
+  handler: async (ctx) => {
+    const auth = await requireAuth(ctx);
 
     const children = await ctx.db
       .query("children")
-      .withIndex("by_parentId", (q: any) => q.eq("parentId", userId))
+      .withIndex("by_parentId", (q) => q.eq("parentId", auth.userId))
       .collect();
 
-    return children.map((child: any) => ({
+    return children.map((child) => ({
       id: child._id,
       firstName: child.firstName,
       lastName: child.lastName,
@@ -54,7 +29,6 @@ export const getChildren = query({
 // MUTATION: Add a child
 export const addChild = mutation({
   args: {
-    token: v.string(),
     firstName: v.string(),
     lastName: v.string(),
     dateOfBirth: v.optional(v.string()),
@@ -67,15 +41,12 @@ export const addChild = mutation({
     })),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthenticatedUser(ctx, args.token);
-    if (!userId) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const now = Date.now();
 
     const childId = await ctx.db.insert("children", {
-      parentId: userId,
+      parentId: auth.userId,
       firstName: args.firstName.trim(),
       lastName: args.lastName.trim(),
       dateOfBirth: args.dateOfBirth,
@@ -93,7 +64,6 @@ export const addChild = mutation({
 // MUTATION: Update a child
 export const updateChild = mutation({
   args: {
-    token: v.string(),
     childId: v.id("children"),
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
@@ -107,10 +77,7 @@ export const updateChild = mutation({
     })),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthenticatedUser(ctx, args.token);
-    if (!userId) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const child = await ctx.db.get(args.childId);
     if (!child) {
@@ -118,11 +85,11 @@ export const updateChild = mutation({
     }
 
     // Verify ownership
-    if (child.parentId !== userId) {
+    if (child.parentId !== auth.userId) {
       throw new Error("Not authorized");
     }
 
-    const updates: Record<string, any> = {
+    const updates: Record<string, unknown> = {
       updatedAt: Date.now(),
     };
 
@@ -142,14 +109,10 @@ export const updateChild = mutation({
 // MUTATION: Remove a child
 export const removeChild = mutation({
   args: {
-    token: v.string(),
     childId: v.id("children"),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthenticatedUser(ctx, args.token);
-    if (!userId) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const child = await ctx.db.get(args.childId);
     if (!child) {
@@ -157,14 +120,14 @@ export const removeChild = mutation({
     }
 
     // Verify ownership
-    if (child.parentId !== userId) {
+    if (child.parentId !== auth.userId) {
       throw new Error("Not authorized");
     }
 
     // Check if child has any ledger items
     const ledgerItems = await ctx.db
       .query("ledgerItems")
-      .filter((q: any) => q.eq(q.field("childId"), args.childId))
+      .filter((q) => q.eq(q.field("childId"), args.childId))
       .first();
 
     if (ledgerItems) {

@@ -1,37 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { getAuthenticatedUser, requireAuth, requireAdmin } from "./authHelpers";
 import type { Doc, Id } from "./_generated/dataModel";
 import { RESERVATION_EXPIRY_MS, DEPOSIT_PER_WEEK } from "./constants";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbContext = { db: any };
-
-// Helper to get authenticated user
-async function getAuthenticatedUser(
-  ctx: DbContext,
-  token: string
-): Promise<{ userId: Id<"users">; role: "user" | "admin" } | null> {
-  const session = await ctx.db
-    .query("authSessions")
-    .withIndex("by_token", (q: any) => q.eq("token", token))
-    .first() as Doc<"authSessions"> | null;
-
-  if (!session || session.expiresAt < Date.now()) {
-    return null;
-  }
-
-  const user = await ctx.db.get(session.userId) as Doc<"users"> | null;
-  if (!user || !user.isActive) {
-    return null;
-  }
-
-  return { userId: user._id, role: user.role };
-}
 
 // QUERY: Get current user's ledger items
 export const getLedgerItems = query({
   args: {
-    token: v.string(),
     status: v.optional(v.union(
       v.literal("draft"),
       v.literal("secured"),
@@ -40,10 +15,7 @@ export const getLedgerItems = query({
     )),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const items = args.status
       ? await ctx.db
@@ -101,9 +73,9 @@ export const getLedgerItems = query({
 
 // QUERY: Get draft items count (for floating action button)
 export const getDraftCount = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
+  args: {},
+  handler: async (ctx) => {
+    const auth = await getAuthenticatedUser(ctx);
     if (!auth) return 0;
 
     const draftItems = await ctx.db
@@ -120,15 +92,11 @@ export const getDraftCount = query({
 // MUTATION: Add session to draft ledger
 export const addToLedger = mutation({
   args: {
-    token: v.string(),
     sessionId: v.id("sessions"),
     childId: v.optional(v.id("children")),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     // Get session
     const session = await ctx.db.get(args.sessionId) as Doc<"sessions"> | null;
@@ -203,14 +171,10 @@ export const addToLedger = mutation({
 // MUTATION: Remove item from draft ledger
 export const removeFromLedger = mutation({
   args: {
-    token: v.string(),
     itemId: v.id("ledgerItems"),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const item = await ctx.db.get(args.itemId) as Doc<"ledgerItems"> | null;
     if (!item) {
@@ -247,15 +211,11 @@ export const removeFromLedger = mutation({
 // MUTATION: Reserve draft items (locks spots, sets expiration)
 export const reserveItems = mutation({
   args: {
-    token: v.string(),
     itemIds: v.array(v.id("ledgerItems")),
     paymentMethod: v.union(v.literal("zelle"), v.literal("cash")),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const now = Date.now();
     const expiresAt = now + RESERVATION_EXPIRY_MS;
@@ -281,8 +241,8 @@ export const reserveItems = mutation({
           // Count all reserved and secured items for this session
           const reservedCount = await ctx.db
             .query("ledgerItems")
-            .withIndex("by_sessionId", (q: any) => q.eq("sessionId", item.sessionId))
-            .filter((q: any) =>
+            .withIndex("by_sessionId", (q) => q.eq("sessionId", item.sessionId))
+            .filter((q) =>
               q.or(
                 q.eq(q.field("status"), "reserved"),
                 q.eq(q.field("status"), "secured"),
@@ -330,7 +290,7 @@ export const releaseExpiredReservations = mutation({
     // Find expired reservations
     const expiredItems = await ctx.db
       .query("ledgerItems")
-      .filter((q: any) =>
+      .filter((q) =>
         q.and(
           q.eq(q.field("status"), "reserved"),
           q.lt(q.field("reservationExpiresAt"), now)
@@ -355,15 +315,11 @@ export const releaseExpiredReservations = mutation({
 // MUTATION: Cancel a verified item (admin only typically, or with restrictions)
 export const cancelItem = mutation({
   args: {
-    token: v.string(),
     itemId: v.id("ledgerItems"),
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const item = await ctx.db.get(args.itemId) as Doc<"ledgerItems"> | null;
     if (!item) {
@@ -418,14 +374,10 @@ export const cancelItem = mutation({
 // QUERY: Get user's ledger for admin view
 export const getUserLedger = query({
   args: {
-    token: v.string(),
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth || auth.role !== "admin") {
-      throw new Error("Admin access required");
-    }
+    await requireAdmin(ctx);
 
     const user = await ctx.db.get(args.userId) as Doc<"users"> | null;
     if (!user) {

@@ -4,8 +4,8 @@ import { useAuth } from "../../lib/AuthContext";
 import { Link } from "react-router-dom";
 
 export function DashboardOverview() {
-  const { token } = useAuth();
-  const stats = useQuery(api.admin.getDashboardStats, token ? { token } : "skip");
+  const { isAuthenticated } = useAuth();
+  const stats = useQuery(api.admin.getDashboardStats, isAuthenticated ? {} : "skip");
 
   if (!stats) {
     return (

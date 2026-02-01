@@ -8,8 +8,8 @@ interface UserLedgerViewProps {
 }
 
 export function UserLedgerView({ userId }: UserLedgerViewProps) {
-  const { token } = useAuth();
-  const ledgerData = useQuery(api.ledgerItems.getUserLedger, token ? { token, userId } : "skip");
+  const { isAuthenticated } = useAuth();
+  const ledgerData = useQuery(api.ledgerItems.getUserLedger, isAuthenticated ? { userId } : "skip");
 
   if (!ledgerData) {
     return <div className="animate-pulse bg-white rounded-xl shadow-md p-6 h-48"></div>;

@@ -1,43 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
-
-// Helper to get authenticated user
-async function getAuthenticatedUser(
-  ctx: { db: any },
-  token: string
-): Promise<{ userId: Id<"users">; role: "user" | "admin" } | null> {
-  const session = await ctx.db
-    .query("authSessions")
-    .withIndex("by_token", (q: any) => q.eq("token", token))
-    .first();
-
-  if (!session || session.expiresAt < Date.now()) {
-    return null;
-  }
-
-  const user = await ctx.db.get(session.userId) as Doc<"users"> | null;
-  if (!user || !user.isActive) {
-    return null;
-  }
-
-  return { userId: user._id, role: user.role };
-}
-
-// Helper to verify admin access
-async function requireAdmin(
-  ctx: { db: any },
-  token: string
-): Promise<Id<"users">> {
-  const auth = await getAuthenticatedUser(ctx, token);
-  if (!auth) {
-    throw new Error("Not authenticated");
-  }
-  if (auth.role !== "admin") {
-    throw new Error("Admin access required");
-  }
-  return auth.userId;
-}
+import { requireAdmin } from "./authHelpers";
+import type { Doc } from "./_generated/dataModel";
 
 // QUERY: List all active sessions (public)
 export const listSessions = query({
@@ -99,7 +63,6 @@ export const getSession = query({
 // ADMIN: Create new session
 export const createSession = mutation({
   args: {
-    token: v.string(),
     name: v.string(),
     description: v.optional(v.string()),
     startDate: v.string(),
@@ -112,7 +75,7 @@ export const createSession = mutation({
     earlyBirdDeadline: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const now = Date.now();
 
@@ -149,7 +112,6 @@ export const createSession = mutation({
 // ADMIN: Update session
 export const updateSession = mutation({
   args: {
-    token: v.string(),
     sessionId: v.id("sessions"),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
@@ -164,7 +126,7 @@ export const updateSession = mutation({
     earlyBirdDeadline: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
@@ -206,11 +168,10 @@ export const updateSession = mutation({
 // ADMIN: Delete session (soft delete by setting inactive)
 export const deleteSession = mutation({
   args: {
-    token: v.string(),
     sessionId: v.id("sessions"),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
@@ -250,11 +211,10 @@ export const deleteSession = mutation({
 // ADMIN: Get session enrollments
 export const getSessionEnrollments = query({
   args: {
-    token: v.string(),
     sessionId: v.id("sessions"),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const session = await ctx.db.get(args.sessionId);
     if (!session) {
@@ -305,9 +265,9 @@ export const getSessionEnrollments = query({
 
 // ADMIN: Get session stats
 export const getSessionStats = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
 
     const sessions = await ctx.db.query("sessions").collect();
 
@@ -329,12 +289,11 @@ export const getSessionStats = query({
 // ADMIN: Upload session image
 export const setSessionImage = mutation({
   args: {
-    token: v.string(),
     sessionId: v.id("sessions"),
     storageId: v.id("_storage"),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     await ctx.db.patch(args.sessionId, {
       imageStorageId: args.storageId,

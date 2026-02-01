@@ -1,61 +1,18 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbContext = { db: any };
-
-// Helper to verify user is authenticated
-async function getAuthenticatedUser(
-  ctx: DbContext,
-  token: string
-): Promise<{ userId: Id<"users">; role: "user" | "admin" } | null> {
-  const session = await ctx.db
-    .query("authSessions")
-    .withIndex("by_token", (q: any) => q.eq("token", token))
-    .first() as Doc<"authSessions"> | null;
-
-  if (!session || session.expiresAt < Date.now()) {
-    return null;
-  }
-
-  const user = await ctx.db.get(session.userId) as Doc<"users"> | null;
-  if (!user || !user.isActive) {
-    return null;
-  }
-
-  return { userId: user._id, role: user.role };
-}
-
-// Helper to verify admin access
-async function requireAdmin(
-  ctx: DbContext,
-  token: string
-): Promise<Id<"users">> {
-  const auth = await getAuthenticatedUser(ctx, token);
-  if (!auth) {
-    throw new Error("Not authenticated");
-  }
-  if (auth.role !== "admin") {
-    throw new Error("Admin access required");
-  }
-  return auth.userId;
-}
+import { getAuthenticatedUser, requireAdmin, requireAuth } from "./authHelpers";
+import type { Doc } from "./_generated/dataModel";
 
 // QUERY: Get current user profile
 export const getProfile = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    const session = await ctx.db
-      .query("authSessions")
-      .withIndex("by_token", (q) => q.eq("token", args.token))
-      .first();
-
-    if (!session || session.expiresAt < Date.now()) {
+  args: {},
+  handler: async (ctx) => {
+    const auth = await getAuthenticatedUser(ctx);
+    if (!auth) {
       return null;
     }
 
-    const user = await ctx.db.get(session.userId) as Doc<"users"> | null;
+    const user = await ctx.db.get(auth.userId) as Doc<"users"> | null;
     if (!user) return null;
 
     return {
@@ -71,8 +28,9 @@ export const getProfile = query({
       referralCode: user.referralCode,
       referralClaimed: user.referralClaimed,
       hasUsedReferral: user.hasUsedReferral,
-      emailVerified: user.emailVerified,
+      emailVerified: !!user.emailVerificationTime,
       createdAt: user.createdAt,
+      image: user.image,
     };
   },
 });
@@ -80,7 +38,6 @@ export const getProfile = query({
 // MUTATION: Update current user profile
 export const updateProfile = mutation({
   args: {
-    token: v.string(),
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
     phone: v.optional(v.string()),
@@ -92,10 +49,7 @@ export const updateProfile = mutation({
     })),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const updates: Partial<Doc<"users">> = {
       updatedAt: Date.now(),
@@ -115,14 +69,13 @@ export const updateProfile = mutation({
 // ADMIN: List all users with pagination
 export const listUsers = query({
   args: {
-    token: v.string(),
     cursor: v.optional(v.string()),
     limit: v.optional(v.number()),
     search: v.optional(v.string()),
     role: v.optional(v.union(v.literal("user"), v.literal("admin"))),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const limit = args.limit || 20;
 
@@ -138,9 +91,9 @@ export const listUsers = query({
     if (args.search) {
       const searchLower = args.search.toLowerCase();
       filteredResults = results.filter((user) =>
-        user.email.toLowerCase().includes(searchLower) ||
-        user.firstName.toLowerCase().includes(searchLower) ||
-        user.lastName.toLowerCase().includes(searchLower)
+        (user.email?.toLowerCase().includes(searchLower)) ||
+        (user.firstName?.toLowerCase().includes(searchLower)) ||
+        (user.lastName?.toLowerCase().includes(searchLower))
       );
     }
 
@@ -163,11 +116,10 @@ export const listUsers = query({
 // ADMIN: Get single user details
 export const getUser = query({
   args: {
-    token: v.string(),
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const user = await ctx.db.get(args.userId) as Doc<"users"> | null;
     if (!user) {
@@ -194,7 +146,7 @@ export const getUser = query({
       referralCode: user.referralCode,
       referralClaimed: user.referralClaimed,
       hasUsedReferral: user.hasUsedReferral,
-      emailVerified: user.emailVerified,
+      emailVerified: !!user.emailVerificationTime,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       children: children.map((child) => ({
@@ -210,7 +162,6 @@ export const getUser = query({
 // ADMIN: Update user details
 export const updateUser = mutation({
   args: {
-    token: v.string(),
     userId: v.id("users"),
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
@@ -221,7 +172,7 @@ export const updateUser = mutation({
     isActive: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const user = await ctx.db.get(args.userId) as Doc<"users"> | null;
     if (!user) {
@@ -256,70 +207,16 @@ export const updateUser = mutation({
   },
 });
 
-// ADMIN: Create a new admin user
-export const createAdmin = mutation({
-  args: {
-    token: v.string(),
-    email: v.string(),
-    passwordHash: v.string(),
-    firstName: v.string(),
-    lastName: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
-
-    const email = args.email.toLowerCase().trim();
-
-    // Check if email exists
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", email))
-      .first();
-
-    if (existing) {
-      throw new Error("Email already registered");
-    }
-
-    const now = Date.now();
-
-    const userId = await ctx.db.insert("users", {
-      email,
-      passwordHash: args.passwordHash,
-      firstName: args.firstName.trim(),
-      lastName: args.lastName.trim(),
-      role: "admin",
-      isReturning: false,
-      referralClaimed: false,
-      hasUsedReferral: false,
-      isActive: true,
-      emailVerified: true,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // Log activity
-    await ctx.db.insert("activityLog", {
-      userId: adminId,
-      targetType: "user",
-      targetId: userId,
-      action: "created_admin",
-      createdAt: now,
-    });
-
-    return { userId };
-  },
-});
-
 // Get user stats for admin dashboard
 export const getUserStats = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
 
     const allUsers = await ctx.db.query("users").collect();
 
     const totalUsers = allUsers.length;
-    const activeUsers = allUsers.filter((u) => u.isActive).length;
+    const activeUsers = allUsers.filter((u) => u.isActive !== false).length;
     const adminUsers = allUsers.filter((u) => u.role === "admin").length;
     const returningUsers = allUsers.filter((u) => u.isReturning).length;
 
@@ -328,6 +225,34 @@ export const getUserStats = query({
       activeUsers,
       adminUsers,
       returningUsers,
+    };
+  },
+});
+
+// QUERY: Get current user for auth context
+export const currentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const auth = await getAuthenticatedUser(ctx);
+    if (!auth) {
+      return null;
+    }
+
+    const user = await ctx.db.get(auth.userId);
+    if (!user) return null;
+
+    return {
+      id: user._id,
+      email: user.email,
+      firstName: user.firstName ?? "",
+      lastName: user.lastName ?? "",
+      role: user.role ?? "user",
+      isReturning: user.isReturning ?? false,
+      siblingGroupId: user.siblingGroupId,
+      referralCode: user.referralCode,
+      phone: user.phone,
+      address: user.address,
+      image: user.image,
     };
   },
 });

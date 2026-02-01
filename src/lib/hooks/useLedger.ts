@@ -4,34 +4,34 @@ import { useAuth } from "../AuthContext";
 import type { Id } from "../../../convex/_generated/dataModel";
 
 export function useLedger() {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
 
   const ledgerItems = useQuery(
     api.ledgerItems.getLedgerItems,
-    token ? { token } : "skip"
+    isAuthenticated ? {} : "skip"
   );
 
   const balance = useQuery(
     api.deltaEngine.calculateBalance,
-    token ? { token } : "skip"
+    isAuthenticated ? {} : "skip"
   );
 
   const draftCount = useQuery(
     api.ledgerItems.getDraftCount,
-    token ? { token } : "skip"
+    isAuthenticated ? {} : "skip"
   );
 
   const addToLedgerMutation = useMutation(api.ledgerItems.addToLedger);
   const removeFromLedgerMutation = useMutation(api.ledgerItems.removeFromLedger);
 
   const addToLedger = async (sessionId: Id<"sessions">, childId?: Id<"children">) => {
-    if (!token) throw new Error("Not authenticated");
-    return addToLedgerMutation({ token, sessionId, childId });
+    if (!isAuthenticated) throw new Error("Not authenticated");
+    return addToLedgerMutation({ sessionId, childId });
   };
 
   const removeFromLedger = async (itemId: Id<"ledgerItems">) => {
-    if (!token) throw new Error("Not authenticated");
-    return removeFromLedgerMutation({ token, itemId });
+    if (!isAuthenticated) throw new Error("Not authenticated");
+    return removeFromLedgerMutation({ itemId });
   };
 
   return {
@@ -45,10 +45,10 @@ export function useLedger() {
 }
 
 export function useDiscountPreview(additionalWeeks: number) {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
 
   return useQuery(
     api.deltaEngine.getDiscountPreview,
-    token ? { token, additionalWeeks } : "skip"
+    isAuthenticated ? { additionalWeeks } : "skip"
   );
 }

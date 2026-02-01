@@ -1,19 +1,30 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 export default defineSchema({
+  // Convex Auth tables
+  ...authTables,
+
   // ============================================
-  // USERS TABLE
+  // USERS TABLE (extends Convex Auth user)
   // ============================================
   users: defineTable({
-    // Authentication
-    email: v.string(),
-    passwordHash: v.string(),
+    // Convex Auth fields
+    name: v.optional(v.string()),
+    image: v.optional(v.string()),
+    email: v.optional(v.string()),
+    emailVerificationTime: v.optional(v.number()),
+    phone: v.optional(v.string()),
+    phoneVerificationTime: v.optional(v.number()),
+    isAnonymous: v.optional(v.boolean()),
+
+    // Legacy auth field (optional for migration)
+    passwordHash: v.optional(v.string()),
 
     // Profile info
-    firstName: v.string(),
-    lastName: v.string(),
-    phone: v.optional(v.string()),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
     address: v.optional(v.object({
       street: v.string(),
       city: v.string(),
@@ -22,44 +33,28 @@ export default defineSchema({
     })),
 
     // Role
-    role: v.union(v.literal("user"), v.literal("admin")),
+    role: v.optional(v.union(v.literal("user"), v.literal("admin"))),
 
     // Registration flags
-    isReturning: v.boolean(),
+    isReturning: v.optional(v.boolean()),
     siblingGroupId: v.optional(v.string()),
 
     // Referral system
     referralCode: v.optional(v.string()),
-    referralClaimed: v.boolean(),
-    hasUsedReferral: v.boolean(),
+    referralClaimed: v.optional(v.boolean()),
+    hasUsedReferral: v.optional(v.boolean()),
     referredBy: v.optional(v.id("users")),
 
     // Account status
-    isActive: v.boolean(),
-    emailVerified: v.boolean(),
+    isActive: v.optional(v.boolean()),
 
-    createdAt: v.number(),
-    updatedAt: v.number(),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
   })
     .index("by_email", ["email"])
     .index("by_siblingGroup", ["siblingGroupId"])
     .index("by_referralCode", ["referralCode"])
     .index("by_role", ["role"]),
-
-  // ============================================
-  // AUTH SESSIONS TABLE
-  // ============================================
-  authSessions: defineTable({
-    userId: v.id("users"),
-    token: v.string(),
-    expiresAt: v.number(),
-    userAgent: v.optional(v.string()),
-    ipAddress: v.optional(v.string()),
-    createdAt: v.number(),
-  })
-    .index("by_token", ["token"])
-    .index("by_userId", ["userId"])
-    .index("by_expiresAt", ["expiresAt"]),
 
   // ============================================
   // CHILDREN TABLE (for family accounts)
@@ -159,7 +154,7 @@ export default defineSchema({
   // ============================================
   receipts: defineTable({
     userId: v.id("users"),
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),  // Optional: cash receipts have no image
 
     status: v.union(
       v.literal("pending"),
@@ -170,6 +165,11 @@ export default defineSchema({
     amount: v.number(),
     paymentMethod: v.optional(v.string()),
     transactionRef: v.optional(v.string()),
+
+    // Receipt type: zelle (has image) or cash (no image, collect in person)
+    receiptType: v.optional(v.union(v.literal("zelle"), v.literal("cash"))),
+    // Links paired receipts (cash receipt points to its zelle deposit receipt)
+    relatedReceiptId: v.optional(v.id("receipts")),
 
     linkedLedgerItems: v.array(v.id("ledgerItems")),
 
@@ -183,7 +183,8 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_status", ["status"])
     .index("by_userId_status", ["userId", "status"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_receiptType", ["receiptType"]),
 
   // ============================================
   // COUPONS TABLE

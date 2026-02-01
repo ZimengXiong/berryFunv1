@@ -9,8 +9,8 @@ interface ProfileEditProps {
 }
 
 export function ProfileEdit({ onCancel, onSave }: ProfileEditProps) {
-  const { token } = useAuth();
-  const profile = useQuery(api.users.getProfile, token ? { token } : "skip");
+  const { isAuthenticated } = useAuth();
+  const profile = useQuery(api.users.getProfile, isAuthenticated ? {} : "skip");
   const updateProfile = useMutation(api.users.updateProfile);
 
   const [formData, setFormData] = useState({
@@ -34,14 +34,13 @@ export function ProfileEdit({ onCancel, onSave }: ProfileEditProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token) return;
+    if (!isAuthenticated) return;
 
     setError("");
     setIsLoading(true);
 
     try {
       await updateProfile({
-        token,
         firstName: formData.firstName,
         lastName: formData.lastName,
         phone: formData.phone || undefined,

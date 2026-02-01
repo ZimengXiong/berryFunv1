@@ -4,8 +4,8 @@ import { useAuth } from "../../../lib/AuthContext";
 import { Link } from "react-router-dom";
 
 export function CouponList() {
-  const { token } = useAuth();
-  const coupons = useQuery(api.coupons.listCoupons, token ? { token } : "skip");
+  const { isAuthenticated } = useAuth();
+  const coupons = useQuery(api.coupons.listCoupons, isAuthenticated ? {} : "skip");
 
   if (!coupons) {
     return <div className="animate-pulse bg-white rounded-xl shadow-md p-6 h-48"></div>;

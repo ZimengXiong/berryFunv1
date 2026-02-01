@@ -9,8 +9,8 @@ interface SessionEnrollmentsProps {
 }
 
 export function SessionEnrollments({ sessionId }: SessionEnrollmentsProps) {
-  const { token } = useAuth();
-  const data = useQuery(api.sessions.getSessionEnrollments, token ? { token, sessionId } : "skip");
+  const { isAuthenticated } = useAuth();
+  const data = useQuery(api.sessions.getSessionEnrollments, isAuthenticated ? { sessionId } : "skip");
 
   if (!data) {
     return <div className="animate-pulse bg-white rounded-xl shadow-md p-6 h-48"></div>;

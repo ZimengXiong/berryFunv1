@@ -5,8 +5,8 @@ import { useAuth } from "../../lib/AuthContext";
 import type { Id } from "../../../convex/_generated/dataModel";
 
 export function ChildrenManager() {
-  const { token } = useAuth();
-  const children = useQuery(api.children.getChildren, token ? { token } : "skip");
+  const { isAuthenticated } = useAuth();
+  const children = useQuery(api.children.getChildren, isAuthenticated ? {} : "skip");
   const addChild = useMutation(api.children.addChild);
   const updateChild = useMutation(api.children.updateChild);
   const removeChild = useMutation(api.children.removeChild);
@@ -44,14 +44,13 @@ export function ChildrenManager() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token) return;
+    if (!isAuthenticated) return;
 
     setError("");
 
     try {
       if (editingId) {
         await updateChild({
-          token,
           childId: editingId,
           firstName: formData.firstName,
           lastName: formData.lastName,
@@ -61,7 +60,6 @@ export function ChildrenManager() {
         });
       } else {
         await addChild({
-          token,
           firstName: formData.firstName,
           lastName: formData.lastName,
           dateOfBirth: formData.dateOfBirth || undefined,
@@ -88,11 +86,11 @@ export function ChildrenManager() {
   };
 
   const handleRemove = async (childId: Id<"children">) => {
-    if (!token) return;
+    if (!isAuthenticated) return;
     if (!confirm("Are you sure you want to remove this child?")) return;
 
     try {
-      await removeChild({ token, childId });
+      await removeChild({ childId });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove child");
     }

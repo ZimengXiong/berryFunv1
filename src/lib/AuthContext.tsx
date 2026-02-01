@@ -1,10 +1,13 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
-import { useQuery, useMutation, useAction } from "convex/react";
+import { useQuery } from "convex/react";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
 import { api } from "../../convex/_generated/api";
 
 interface User {
-  email: string;
+  id: string;
+  email?: string;
   firstName: string;
   lastName: string;
   role: "user" | "admin";
@@ -18,112 +21,133 @@ interface User {
     state: string;
     zip: string;
   };
+  image?: string;
 }
 
 interface AuthContextType {
   user: User | null;
   userId: string | null;
-  token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   isAdmin: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (data: RegisterData) => Promise<void>;
-  logout: () => Promise<void>;
-}
-
-interface RegisterData {
-  email: string;
-  password: string;
-  firstName: string;
-  lastName: string;
-  phone?: string;
-  referralCode?: string;
+  signIn: (provider: "google") => Promise<void>;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const TOKEN_KEY = "berryFun_authToken";
+function AuthProviderInner({ children }: { children: ReactNode }) {
+  const { signIn, signOut } = useAuthActions();
+  const currentUser = useQuery(api.users.currentUser);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => {
-    return localStorage.getItem(TOKEN_KEY);
-  });
-  const [isLoading, setIsLoading] = useState(true);
+  const handleSignIn = async (provider: "google") => {
+    await signIn(provider);
+  };
 
-  const sessionData = useQuery(
-    api.auth.validateSession,
-    token ? { token } : "skip"
-  );
+  const handleSignOut = async () => {
+    await signOut();
+  };
 
-  const hashPasswordAction = useAction(api.auth.hashPassword);
-  const registerMutation = useMutation(api.auth.register);
-  const loginAction = useAction(api.auth.loginWithPassword);
-  const logoutMutation = useMutation(api.auth.logout);
-
-  useEffect(() => {
-    if (token && sessionData === null) {
-      // Session invalid, clear token
-      localStorage.removeItem(TOKEN_KEY);
-      setToken(null);
-    }
-    setIsLoading(false);
-  }, [token, sessionData]);
-
-  const login = useCallback(async (email: string, password: string) => {
-    const result = await loginAction({
-      email,
-      password,
-    });
-
-    localStorage.setItem(TOKEN_KEY, result.token);
-    setToken(result.token);
-  }, [loginAction]);
-
-  const register = useCallback(async (data: RegisterData) => {
-    const passwordHash = await hashPasswordAction({ password: data.password });
-
-    const result = await registerMutation({
-      email: data.email,
-      passwordHash,
-      firstName: data.firstName,
-      lastName: data.lastName,
-      phone: data.phone,
-      referralCode: data.referralCode,
-    });
-
-    localStorage.setItem(TOKEN_KEY, result.token);
-    setToken(result.token);
-  }, [registerMutation, hashPasswordAction]);
-
-  const logout = useCallback(async () => {
-    if (token) {
-      try {
-        await logoutMutation({ token });
-      } catch {
-        // Ignore errors on logout
-      }
-    }
-    localStorage.removeItem(TOKEN_KEY);
-    setToken(null);
-  }, [token, logoutMutation]);
+  const user: User | null = currentUser ? {
+    id: currentUser.id,
+    email: currentUser.email ?? undefined,
+    firstName: currentUser.firstName,
+    lastName: currentUser.lastName,
+    role: currentUser.role as "user" | "admin",
+    isReturning: currentUser.isReturning,
+    siblingGroupId: currentUser.siblingGroupId,
+    referralCode: currentUser.referralCode,
+    phone: currentUser.phone,
+    address: currentUser.address,
+    image: currentUser.image,
+  } : null;
 
   const value: AuthContextType = {
-    user: sessionData?.user ?? null,
-    userId: sessionData?.userId ?? null,
-    token,
-    isLoading,
-    isAuthenticated: !!sessionData?.user,
-    isAdmin: sessionData?.user?.role === "admin",
-    login,
-    register,
-    logout,
+    user,
+    userId: currentUser?.id ?? null,
+    isLoading: false,
+    isAuthenticated: !!currentUser,
+    isAdmin: currentUser?.role === "admin",
+    signIn: handleSignIn,
+    signOut: handleSignOut,
   };
 
   return (
     <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
+  );
+}
+
+function AuthProviderLoading({ children }: { children: ReactNode }) {
+  const { signIn, signOut } = useAuthActions();
+
+  const handleSignIn = async (provider: "google") => {
+    await signIn(provider);
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
+  const value: AuthContextType = {
+    user: null,
+    userId: null,
+    isLoading: true,
+    isAuthenticated: false,
+    isAdmin: false,
+    signIn: handleSignIn,
+    signOut: handleSignOut,
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+function AuthProviderUnauthenticated({ children }: { children: ReactNode }) {
+  const { signIn, signOut } = useAuthActions();
+
+  const handleSignIn = async (provider: "google") => {
+    await signIn(provider);
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
+  const value: AuthContextType = {
+    user: null,
+    userId: null,
+    isLoading: false,
+    isAuthenticated: false,
+    isAdmin: false,
+    signIn: handleSignIn,
+    signOut: handleSignOut,
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  return (
+    <>
+      <AuthLoading>
+        <AuthProviderLoading>{children}</AuthProviderLoading>
+      </AuthLoading>
+      <Unauthenticated>
+        <AuthProviderUnauthenticated>{children}</AuthProviderUnauthenticated>
+      </Unauthenticated>
+      <Authenticated>
+        <AuthProviderInner>{children}</AuthProviderInner>
+      </Authenticated>
+    </>
   );
 }
 

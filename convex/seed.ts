@@ -36,7 +36,7 @@ export const createSeedUser = mutation({
       referralClaimed: false,
       hasUsedReferral: false,
       isActive: true,
-      emailVerified: true,
+      emailVerificationTime: now,
       createdAt: now,
       updatedAt: now,
     });

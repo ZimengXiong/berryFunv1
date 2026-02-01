@@ -5,15 +5,14 @@ import { useAuth } from "../../../lib/AuthContext";
 import { Link } from "react-router-dom";
 
 export function UserList() {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"user" | "admin" | "">("");
 
   const users = useQuery(
     api.users.listUsers,
-    token
+    isAuthenticated
       ? {
-          token,
           search: search || undefined,
           role: roleFilter || undefined,
         }

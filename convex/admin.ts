@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
+import { requireAdmin } from "./authHelpers";
+import type { Doc } from "./_generated/dataModel";
 import {
   getTieredDiscount,
   RETURNING_CREDIT_PER_WEEK,
@@ -8,41 +9,15 @@ import {
   EARLY_BIRD_DISCOUNT_PERCENT,
 } from "./constants";
 
-// Helper to verify admin access
-async function requireAdmin(
-  ctx: { db: any },
-  token: string
-): Promise<Id<"users">> {
-  const session = await ctx.db
-    .query("authSessions")
-    .withIndex("by_token", (q: any) => q.eq("token", token))
-    .first() as Doc<"authSessions"> | null;
-
-  if (!session || session.expiresAt < Date.now()) {
-    throw new Error("Not authenticated");
-  }
-
-  const user = await ctx.db.get(session.userId) as Doc<"users"> | null;
-  if (!user || !user.isActive) {
-    throw new Error("Not authenticated");
-  }
-
-  if (user.role !== "admin") {
-    throw new Error("Admin access required");
-  }
-
-  return user._id;
-}
-
 // MUTATION: Verify receipt (items → verified, snapshots discounts)
+// For paired receipts (Zelle + Cash), only the first verification processes ledger items
 export const verifyReceipt = mutation({
   args: {
-    token: v.string(),
     receiptId: v.id("receipts"),
     adminNotes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const receipt = await ctx.db.get(args.receiptId);
     if (!receipt) {
@@ -55,81 +30,90 @@ export const verifyReceipt = mutation({
 
     const now = Date.now();
 
-    // Get user for discount calculations
-    const user = await ctx.db.get(receipt.userId);
-    if (!user) {
-      throw new Error("User not found");
-    }
+    // Check if ledger items are already verified (by related receipt)
+    // This happens when: Zelle verified first, then cash; or vice versa
+    const firstItem = receipt.linkedLedgerItems.length > 0
+      ? await ctx.db.get(receipt.linkedLedgerItems[0])
+      : null;
+    const itemsAlreadyVerified = firstItem?.status === "verified";
 
-    // Get all user's non-cancelled enrollments for tier calculation
-    const allEnrollments = await ctx.db
-      .query("ledgerItems")
-      .withIndex("by_userId", (q: any) => q.eq("userId", receipt.userId))
-      .filter((q: any) =>
-        q.and(
-          q.eq(q.field("type"), "enrollment"),
-          q.neq(q.field("status"), "cancelled")
+    if (!itemsAlreadyVerified) {
+      // Get user for discount calculations
+      const user = await ctx.db.get(receipt.userId);
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      // Get all user's non-cancelled enrollments for tier calculation
+      const allEnrollments = await ctx.db
+        .query("ledgerItems")
+        .withIndex("by_userId", (q) => q.eq("userId", receipt.userId))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("type"), "enrollment"),
+            q.neq(q.field("status"), "cancelled")
+          )
         )
-      )
-      .collect();
+        .collect();
 
-    const totalWeekCount = allEnrollments.length;
-    const tieredDiscount = getTieredDiscount(totalWeekCount);
+      const totalWeekCount = allEnrollments.length;
+      const tieredDiscount = getTieredDiscount(totalWeekCount);
 
-    // Calculate per-item discount share
-    const itemCount = receipt.linkedLedgerItems.length;
-    const perItemTieredDiscount = itemCount > 0 ? tieredDiscount / totalWeekCount : 0;
+      // Calculate per-item discount share
+      const itemCount = receipt.linkedLedgerItems.length;
+      const perItemTieredDiscount = itemCount > 0 ? tieredDiscount / totalWeekCount : 0;
 
-    // Update each linked ledger item
-    for (const itemId of receipt.linkedLedgerItems) {
-      const item = await ctx.db.get(itemId);
-      if (!item) continue;
+      // Update each linked ledger item
+      for (const itemId of receipt.linkedLedgerItems) {
+        const item = await ctx.db.get(itemId);
+        if (!item) continue;
 
-      // Calculate this item's early bird credit
-      let earlyBirdCredit = 0;
-      if (item.sessionId) {
-        const session = await ctx.db.get(item.sessionId);
-        if (session && session.earlyBirdDeadline) {
-          if (item.createdAt < session.earlyBirdDeadline) {
-            earlyBirdCredit = item.amount * (EARLY_BIRD_DISCOUNT_PERCENT / 100);
+        // Calculate this item's early bird credit
+        let earlyBirdCredit = 0;
+        if (item.sessionId) {
+          const session = await ctx.db.get(item.sessionId);
+          if (session && session.earlyBirdDeadline) {
+            if (item.createdAt < session.earlyBirdDeadline) {
+              earlyBirdCredit = item.amount * (EARLY_BIRD_DISCOUNT_PERCENT / 100);
+            }
+          }
+        }
+
+        // Update item to verified with snapshotted discounts
+        await ctx.db.patch(itemId, {
+          status: "verified",
+          snapshotTieredDiscount: perItemTieredDiscount,
+          snapshotReturningCredit: user.isReturning ? RETURNING_CREDIT_PER_WEEK : 0,
+          snapshotSiblingCredit: user.siblingGroupId ? SIBLING_CREDIT_PER_WEEK : 0,
+          snapshotEarlyBirdCredit: earlyBirdCredit,
+          verifiedAt: now,
+          updatedAt: now,
+        });
+
+        // Increment session enrollment count for enrollment items
+        if (item.type === "enrollment" && item.sessionId) {
+          const session = await ctx.db.get(item.sessionId);
+          if (session) {
+            await ctx.db.patch(item.sessionId, {
+              enrolledCount: session.enrolledCount + 1,
+              updatedAt: now,
+            });
           }
         }
       }
 
-      // Update item to verified with snapshotted discounts
-      await ctx.db.patch(itemId, {
-        status: "verified",
-        snapshotTieredDiscount: perItemTieredDiscount,
-        snapshotReturningCredit: user.isReturning ? RETURNING_CREDIT_PER_WEEK : 0,
-        snapshotSiblingCredit: user.siblingGroupId ? SIBLING_CREDIT_PER_WEEK : 0,
-        snapshotEarlyBirdCredit: earlyBirdCredit,
-        verifiedAt: now,
-        updatedAt: now,
-      });
-
-      // Increment session enrollment count for enrollment items
-      if (item.type === "enrollment" && item.sessionId) {
-        const session = await ctx.db.get(item.sessionId);
-        if (session) {
-          await ctx.db.patch(item.sessionId, {
-            enrolledCount: session.enrolledCount + 1,
-            updatedAt: now,
-          });
-        }
-      }
-    }
-
-    // Consume any pending coupons linked to the verified items
-    for (const itemId of receipt.linkedLedgerItems) {
-      const item = await ctx.db.get(itemId);
-      if (item && item.couponId) {
-        const coupon = await ctx.db.get(item.couponId);
-        if (coupon && coupon.status === "pending") {
-          await ctx.db.patch(item.couponId, {
-            status: "consumed",
-            currentUses: coupon.currentUses + 1,
-            updatedAt: now,
-          });
+      // Consume any pending coupons linked to the verified items
+      for (const itemId of receipt.linkedLedgerItems) {
+        const item = await ctx.db.get(itemId);
+        if (item && item.couponId) {
+          const coupon = await ctx.db.get(item.couponId);
+          if (coupon && coupon.status === "pending") {
+            await ctx.db.patch(item.couponId, {
+              status: "consumed",
+              currentUses: coupon.currentUses + 1,
+              updatedAt: now,
+            });
+          }
         }
       }
     }
@@ -148,6 +132,7 @@ export const verifyReceipt = mutation({
       targetType: "receipt",
       targetId: args.receiptId,
       action: "verified",
+      details: itemsAlreadyVerified ? "Payment tracking only (items already verified)" : undefined,
       createdAt: now,
     });
 
@@ -156,15 +141,15 @@ export const verifyReceipt = mutation({
 });
 
 // MUTATION: Deny receipt (items → draft, releases coupons)
+// For paired receipts, denying the Zelle deposit also denies the cash receipt
 export const denyReceipt = mutation({
   args: {
-    token: v.string(),
     receiptId: v.id("receipts"),
     denialReason: v.string(),
     adminNotes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const receipt = await ctx.db.get(args.receiptId);
     if (!receipt) {
@@ -211,6 +196,40 @@ export const denyReceipt = mutation({
       verifiedAt: now,
     });
 
+    // If this is a Zelle receipt, also deny the related cash receipt
+    // (Cash receipts point to Zelle via relatedReceiptId, so we search for any receipt pointing to this one)
+    if (receipt.receiptType === "zelle" || !receipt.receiptType) {
+      const relatedCashReceipts = await ctx.db
+        .query("receipts")
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("relatedReceiptId"), args.receiptId),
+            q.eq(q.field("status"), "pending")
+          )
+        )
+        .collect();
+
+      for (const cashReceipt of relatedCashReceipts) {
+        await ctx.db.patch(cashReceipt._id, {
+          status: "denied",
+          verifiedBy: adminId,
+          denialReason: "Related Zelle deposit was denied",
+          adminNotes: args.adminNotes?.trim(),
+          verifiedAt: now,
+        });
+
+        // Log activity for cash receipt denial
+        await ctx.db.insert("activityLog", {
+          userId: adminId,
+          targetType: "receipt",
+          targetId: cashReceipt._id,
+          action: "denied",
+          details: "Auto-denied: Related Zelle deposit was denied",
+          createdAt: now,
+        });
+      }
+    }
+
     // Log activity
     await ctx.db.insert("activityLog", {
       userId: adminId,
@@ -227,9 +246,9 @@ export const denyReceipt = mutation({
 
 // QUERY: Get dashboard overview stats
 export const getDashboardStats = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
 
     // Get counts
     const users = await ctx.db.query("users").collect();
@@ -239,17 +258,17 @@ export const getDashboardStats = query({
 
     // Calculate stats
     const totalUsers = users.length;
-    const activeUsers = users.filter((u: any) => u.isActive).length;
+    const activeUsers = users.filter((u) => u.isActive !== false).length;
 
-    const activeSessions = sessions.filter((s: any) => s.isActive).length;
+    const activeSessions = sessions.filter((s) => s.isActive).length;
     const totalEnrollments = ledgerItems.filter(
-      (i: any) => i.type === "enrollment" && i.status === "verified"
+      (i) => i.type === "enrollment" && i.status === "verified"
     ).length;
 
-    const pendingReceipts = receipts.filter((r: any) => r.status === "pending").length;
+    const pendingReceipts = receipts.filter((r) => r.status === "pending").length;
     const totalRevenue = receipts
-      .filter((r: any) => r.status === "verified")
-      .reduce((sum: number, r: any) => sum + r.amount, 0);
+      .filter((r) => r.status === "verified")
+      .reduce((sum: number, r) => sum + r.amount, 0);
 
     // Recent activity
     const recentActivity = await ctx.db
@@ -259,12 +278,12 @@ export const getDashboardStats = query({
       .take(10);
 
     const enrichedActivity = await Promise.all(
-      recentActivity.map(async (activity: any) => {
+      recentActivity.map(async (activity) => {
         let userName = "System";
         if (activity.userId) {
           const user = await ctx.db.get(activity.userId) as Doc<"users"> | null;
           if (user) {
-            userName = `${user.firstName} ${user.lastName}`;
+            userName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || "User";
           }
         }
 
@@ -293,33 +312,32 @@ export const getDashboardStats = query({
 // QUERY: Get activity log
 export const getActivityLog = query({
   args: {
-    token: v.string(),
     limit: v.optional(v.number()),
     targetType: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const limit = args.limit || 50;
 
-    let query;
+    let queryBuilder;
     if (args.targetType) {
-      query = ctx.db
+      queryBuilder = ctx.db
         .query("activityLog")
-        .withIndex("by_targetType", (q: any) => q.eq("targetType", args.targetType));
+        .withIndex("by_targetType", (q) => q.eq("targetType", args.targetType!));
     } else {
-      query = ctx.db.query("activityLog").withIndex("by_createdAt");
+      queryBuilder = ctx.db.query("activityLog").withIndex("by_createdAt");
     }
 
-    const activities = await query.order("desc").take(limit);
+    const activities = await queryBuilder.order("desc").take(limit);
 
     return Promise.all(
-      activities.map(async (activity: any) => {
+      activities.map(async (activity) => {
         let userName = "System";
         if (activity.userId) {
           const user = await ctx.db.get(activity.userId) as Doc<"users"> | null;
           if (user) {
-            userName = `${user.firstName} ${user.lastName}`;
+            userName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || "User";
           }
         }
 
@@ -341,13 +359,12 @@ export const getActivityLog = query({
 // MUTATION: Create admin credit memo for a user
 export const createCreditMemo = mutation({
   args: {
-    token: v.string(),
     userId: v.id("users"),
     amount: v.number(),
     description: v.string(),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const user = await ctx.db.get(args.userId);
     if (!user) {
@@ -384,22 +401,21 @@ export const createCreditMemo = mutation({
 // ADMIN: Get all verified orders
 export const getVerifiedOrders = query({
   args: {
-    token: v.string(),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const limit = args.limit || 50;
 
     const items = await ctx.db
       .query("ledgerItems")
-      .withIndex("by_status", (q: any) => q.eq("status", "verified"))
+      .withIndex("by_status", (q) => q.eq("status", "verified"))
       .order("desc")
       .take(limit);
 
     return Promise.all(
-      items.map(async (item: any) => {
+      items.map(async (item) => {
         const user = await ctx.db.get(item.userId) as Doc<"users"> | null;
         const session = item.sessionId ? await ctx.db.get(item.sessionId) as Doc<"sessions"> | null : null;
         const child = item.childId ? await ctx.db.get(item.childId) as Doc<"children"> | null : null;

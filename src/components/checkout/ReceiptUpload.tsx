@@ -23,7 +23,7 @@ export function ReceiptUpload({
   onSuccess,
   onCancel,
 }: ReceiptUploadProps) {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
@@ -35,6 +35,9 @@ export function ReceiptUpload({
 
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
   const submitReceipt = useMutation(api.receipts.submitReceipt);
+
+  const isCashOption = paymentMethod === "cash";
+  const remainingBalance = fullAmount - depositAmount;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -52,13 +55,13 @@ export function ReceiptUpload({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !token) return;
+    if (!file || !isAuthenticated) return;
 
     setError("");
     setIsUploading(true);
 
     try {
-      const uploadUrl = await generateUploadUrl({ token });
+      const uploadUrl = await generateUploadUrl({});
 
       const response = await fetch(uploadUrl, {
         method: "POST",
@@ -72,13 +75,16 @@ export function ReceiptUpload({
 
       const { storageId } = await response.json();
 
+      // If cash option, pass the remaining balance to create a second cash receipt
+      const cashBalanceAmount = isCashOption ? remainingBalance : undefined;
+
       await submitReceipt({
-        token,
         storageId,
         amount: parseFloat(amount),
-        paymentMethod: "zelle", // Both options use Zelle for the payment
+        paymentMethod: "zelle", // Both options use Zelle for the deposit
         transactionRef: transactionRef || undefined,
         ledgerItemIds,
+        cashBalanceAmount,  // Creates second receipt for cash balance if provided
       });
 
       onSuccess();
@@ -88,9 +94,6 @@ export function ReceiptUpload({
       setIsUploading(false);
     }
   };
-
-  const isCashOption = paymentMethod === "cash";
-  const remainingBalance = fullAmount - depositAmount;
 
   return (
     <div className="max-w-2xl mx-auto">

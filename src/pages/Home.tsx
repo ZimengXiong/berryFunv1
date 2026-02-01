@@ -5,9 +5,9 @@ export function Home() {
   const { isAuthenticated } = useAuth();
 
   return (
-    <div className="min-h-screen">
+    <div>
       {/* Hero Section */}
-      <section className="bg-gradient-to-br from-berry-500 to-berry-700 text-white py-20">
+      <section className="bg-gradient-to-br from-berry-500 to-berry-700 text-white min-h-screen flex items-center">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h1 className="text-5xl font-bold mb-6">
             Welcome to Berry Fun Camp! 🍓

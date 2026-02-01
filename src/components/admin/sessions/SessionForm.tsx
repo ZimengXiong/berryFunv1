@@ -10,7 +10,7 @@ interface SessionFormProps {
 }
 
 export function SessionForm({ sessionId }: SessionFormProps) {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const existingSession = useQuery(
     api.sessions.getSession,
@@ -63,14 +63,13 @@ export function SessionForm({ sessionId }: SessionFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token) return;
+    if (!isAuthenticated) return;
 
     setError("");
     setIsLoading(true);
 
     try {
       const sessionData = {
-        token,
         name: formData.name,
         description: formData.description || undefined,
         startDate: formData.startDate,
@@ -101,11 +100,11 @@ export function SessionForm({ sessionId }: SessionFormProps) {
   };
 
   const handleDelete = async () => {
-    if (!token || !sessionId) return;
+    if (!isAuthenticated || !sessionId) return;
     if (!confirm("Are you sure you want to delete this session?")) return;
 
     try {
-      await deleteSession({ token, sessionId });
+      await deleteSession({ sessionId });
       navigate("/admin/sessions");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete session");

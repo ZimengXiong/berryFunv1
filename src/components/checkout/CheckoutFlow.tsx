@@ -25,7 +25,7 @@ interface ReservationData {
 
 export function CheckoutFlow() {
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const { items, balance, removeFromLedger, isLoading } = useLedger();
   const [step, setStep] = useState<Step>("review");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(null);
@@ -107,7 +107,7 @@ export function CheckoutFlow() {
   }
 
   const handleSelectPaymentMethod = async (method: "zelle" | "cash") => {
-    if (!token) return;
+    if (!isAuthenticated) return;
 
     setPaymentMethod(method);
     setError("");
@@ -116,7 +116,6 @@ export function CheckoutFlow() {
     try {
       const itemIds = checkoutItems.map(i => i.id);
       const result = await reserveItems({
-        token,
         itemIds,
         paymentMethod: method,
       });

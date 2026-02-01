@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import { useAuth } from "../../../lib/AuthContext";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { useNavigate, Link } from "react-router-dom";
 
@@ -10,9 +9,8 @@ interface ReceiptReviewProps {
 }
 
 export function ReceiptReview({ receiptId }: ReceiptReviewProps) {
-  const { token } = useAuth();
   const navigate = useNavigate();
-  const receipt = useQuery(api.receipts.getReceipt, token ? { token, receiptId } : "skip");
+  const receipt = useQuery(api.receipts.getReceipt, { receiptId });
   const fileUrl = useQuery(
     api.files.getFileUrl,
     receipt?.storageId ? { storageId: receipt.storageId } : "skip"
@@ -31,12 +29,10 @@ export function ReceiptReview({ receiptId }: ReceiptReviewProps) {
   }
 
   const handleVerify = async () => {
-    if (!token) return;
     setIsProcessing(true);
 
     try {
       await verifyReceipt({
-        token,
         receiptId,
         adminNotes: adminNotes || undefined,
       });
@@ -49,12 +45,11 @@ export function ReceiptReview({ receiptId }: ReceiptReviewProps) {
   };
 
   const handleDeny = async () => {
-    if (!token || !denialReason.trim()) return;
+    if (!denialReason.trim()) return;
     setIsProcessing(true);
 
     try {
       await denyReceipt({
-        token,
         receiptId,
         denialReason,
         adminNotes: adminNotes || undefined,
@@ -68,6 +63,7 @@ export function ReceiptReview({ receiptId }: ReceiptReviewProps) {
   };
 
   const isPending = receipt.status === "pending";
+  const isCashReceipt = receipt.receiptType === "cash";
 
   return (
     <div className="space-y-6">
@@ -78,10 +74,45 @@ export function ReceiptReview({ receiptId }: ReceiptReviewProps) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Receipt Image */}
+        {/* Receipt Image or Cash Placeholder */}
         <div className="bg-white rounded-xl shadow-md p-6">
-          <h3 className="font-bold text-gray-900 mb-4">Receipt Image</h3>
-          {fileUrl ? (
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-gray-900">
+              {isCashReceipt ? "Cash Payment" : "Receipt Image"}
+            </h3>
+            {isCashReceipt ? (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                Cash
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                Zelle
+              </span>
+            )}
+          </div>
+
+          {isCashReceipt ? (
+            <div className="h-64 bg-amber-50 border-2 border-dashed border-amber-300 rounded-lg flex flex-col items-center justify-center p-6">
+              <span className="text-5xl mb-4">💵</span>
+              <p className="text-lg font-semibold text-amber-800 text-center">
+                Cash Payment Expected
+              </p>
+              <p className="text-amber-600 text-center mt-2">
+                Verify when received in person
+              </p>
+              <p className="text-2xl font-bold text-amber-700 mt-4">
+                ${receipt.amount.toFixed(2)}
+              </p>
+              {receipt.relatedReceiptId && (
+                <Link
+                  to={`/admin/receipts/${receipt.relatedReceiptId}`}
+                  className="mt-4 text-sm text-blue-600 hover:text-blue-700 underline"
+                >
+                  View related Zelle deposit
+                </Link>
+              )}
+            </div>
+          ) : fileUrl ? (
             <a href={fileUrl} target="_blank" rel="noopener noreferrer">
               <img
                 src={fileUrl}
@@ -140,8 +171,18 @@ export function ReceiptReview({ receiptId }: ReceiptReviewProps) {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm font-medium text-gray-500">Payment Method</label>
-                  <p className="text-gray-900">{receipt.paymentMethod || "-"}</p>
+                  <label className="text-sm font-medium text-gray-500">Receipt Type</label>
+                  <p className="text-gray-900">
+                    {isCashReceipt ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-sm font-medium bg-amber-100 text-amber-800">
+                        Cash (collect in person)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-sm font-medium bg-blue-100 text-blue-800">
+                        Zelle
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-500">Reference</label>

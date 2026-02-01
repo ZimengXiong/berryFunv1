@@ -1,58 +1,15 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbContext = { db: any };
-
-// Helper to get authenticated user
-async function getAuthenticatedUser(
-  ctx: DbContext,
-  token: string
-): Promise<{ userId: Id<"users">; role: "user" | "admin" } | null> {
-  const session = await ctx.db
-    .query("authSessions")
-    .withIndex("by_token", (q: any) => q.eq("token", token))
-    .first() as Doc<"authSessions"> | null;
-
-  if (!session || session.expiresAt < Date.now()) {
-    return null;
-  }
-
-  const user = await ctx.db.get(session.userId) as Doc<"users"> | null;
-  if (!user || !user.isActive) {
-    return null;
-  }
-
-  return { userId: user._id, role: user.role };
-}
-
-// Helper to verify admin access
-async function requireAdmin(
-  ctx: DbContext,
-  token: string
-): Promise<Id<"users">> {
-  const auth = await getAuthenticatedUser(ctx, token);
-  if (!auth) {
-    throw new Error("Not authenticated");
-  }
-  if (auth.role !== "admin") {
-    throw new Error("Admin access required");
-  }
-  return auth.userId;
-}
+import { requireAuth, requireAdmin } from "./authHelpers";
+import type { Doc } from "./_generated/dataModel";
 
 // MUTATION: Claim a coupon (creates credit memo, locks coupon)
 export const claimCoupon = mutation({
   args: {
-    token: v.string(),
     code: v.string(),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const couponCode = args.code.toUpperCase().trim();
 
@@ -141,14 +98,10 @@ export const claimCoupon = mutation({
 // MUTATION: Release a claimed coupon (when removing credit memo)
 export const releaseCoupon = mutation({
   args: {
-    token: v.string(),
     couponId: v.id("coupons"),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const coupon = await ctx.db.get(args.couponId) as Doc<"coupons"> | null;
     if (!coupon) {
@@ -187,7 +140,6 @@ export const releaseCoupon = mutation({
 // ADMIN: Create coupon
 export const createCoupon = mutation({
   args: {
-    token: v.string(),
     code: v.string(),
     discountValue: v.number(),
     discountType: v.union(v.literal("fixed"), v.literal("percentage")),
@@ -196,7 +148,7 @@ export const createCoupon = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const code = args.code.toUpperCase().trim();
 
@@ -242,7 +194,6 @@ export const createCoupon = mutation({
 // ADMIN: Update coupon
 export const updateCoupon = mutation({
   args: {
-    token: v.string(),
     couponId: v.id("coupons"),
     discountValue: v.optional(v.number()),
     maxUses: v.optional(v.number()),
@@ -250,7 +201,7 @@ export const updateCoupon = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const coupon = await ctx.db.get(args.couponId) as Doc<"coupons"> | null;
     if (!coupon) {
@@ -275,11 +226,10 @@ export const updateCoupon = mutation({
 // ADMIN: Disable coupon
 export const disableCoupon = mutation({
   args: {
-    token: v.string(),
     couponId: v.id("coupons"),
   },
   handler: async (ctx, args) => {
-    const adminId = await requireAdmin(ctx, args.token);
+    const adminId = await requireAdmin(ctx);
 
     const coupon = await ctx.db.get(args.couponId) as Doc<"coupons"> | null;
     if (!coupon) {
@@ -307,14 +257,13 @@ export const disableCoupon = mutation({
 // ADMIN: List all coupons
 export const listCoupons = query({
   args: {
-    token: v.string(),
     status: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const coupons = args.status
-      ? await ctx.db.query("coupons").withIndex("by_status", (q: any) => q.eq("status", args.status)).order("desc").collect()
+      ? await ctx.db.query("coupons").withIndex("by_status", (q) => q.eq("status", args.status as "available" | "pending" | "consumed" | "expired" | "disabled")).order("desc").collect()
       : await ctx.db.query("coupons").order("desc").collect();
 
     return coupons.map((coupon) => ({
@@ -335,11 +284,10 @@ export const listCoupons = query({
 // ADMIN: Get coupon details
 export const getCoupon = query({
   args: {
-    token: v.string(),
     couponId: v.id("coupons"),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const coupon = await ctx.db.get(args.couponId) as Doc<"coupons"> | null;
     if (!coupon) {
@@ -379,9 +327,9 @@ export const getCoupon = query({
 
 // ADMIN: Get coupon stats
 export const getCouponStats = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
 
     const coupons = await ctx.db.query("coupons").collect();
 

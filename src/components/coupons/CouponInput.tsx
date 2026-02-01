@@ -8,7 +8,7 @@ interface CouponInputProps {
 }
 
 export function CouponInput({ onApplied }: CouponInputProps) {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [code, setCode] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -18,14 +18,14 @@ export function CouponInput({ onApplied }: CouponInputProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token || !code.trim()) return;
+    if (!isAuthenticated || !code.trim()) return;
 
     setError("");
     setSuccess("");
     setIsLoading(true);
 
     try {
-      const result = await claimCoupon({ token, code: code.trim() });
+      const result = await claimCoupon({ code: code.trim() });
       setSuccess(
         `Coupon applied! You saved $${result.discountAmount.toFixed(2)}`
       );

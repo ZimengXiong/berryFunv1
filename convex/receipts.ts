@@ -1,62 +1,23 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { getAuthenticatedUser, requireAuth, requireAdmin } from "./authHelpers";
 import type { Doc, Id } from "./_generated/dataModel";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbContext = { db: any };
-
-// Helper to get authenticated user
-async function getAuthenticatedUser(
-  ctx: DbContext,
-  token: string
-): Promise<{ userId: Id<"users">; role: "user" | "admin" } | null> {
-  const session = await ctx.db
-    .query("authSessions")
-    .withIndex("by_token", (q: any) => q.eq("token", token))
-    .first() as Doc<"authSessions"> | null;
-
-  if (!session || session.expiresAt < Date.now()) {
-    return null;
-  }
-
-  const user = await ctx.db.get(session.userId) as Doc<"users"> | null;
-  if (!user || !user.isActive) {
-    return null;
-  }
-
-  return { userId: user._id, role: user.role };
-}
-
-// Helper to verify admin access
-async function requireAdmin(
-  ctx: DbContext,
-  token: string
-): Promise<Id<"users">> {
-  const auth = await getAuthenticatedUser(ctx, token);
-  if (!auth) {
-    throw new Error("Not authenticated");
-  }
-  if (auth.role !== "admin") {
-    throw new Error("Admin access required");
-  }
-  return auth.userId;
-}
-
 // MUTATION: Submit receipt (secures draft items)
+// When cashBalanceAmount is provided, creates TWO receipts:
+// 1. Zelle deposit receipt (with image)
+// 2. Cash balance receipt (no image, to collect in person)
 export const submitReceipt = mutation({
   args: {
-    token: v.string(),
     storageId: v.id("_storage"),
     amount: v.number(),
     paymentMethod: v.optional(v.string()),
     transactionRef: v.optional(v.string()),
     ledgerItemIds: v.array(v.id("ledgerItems")),
+    cashBalanceAmount: v.optional(v.number()),  // If provided, creates cash receipt for remaining balance
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     if (args.ledgerItemIds.length === 0) {
       throw new Error("No items to secure");
@@ -77,24 +38,43 @@ export const submitReceipt = mutation({
     }
 
     const now = Date.now();
+    const isCashOption = args.cashBalanceAmount !== undefined && args.cashBalanceAmount > 0;
 
-    // Create receipt
-    const receiptId = await ctx.db.insert("receipts", {
+    // Create Zelle receipt (always has image)
+    const zelleReceiptId = await ctx.db.insert("receipts", {
       userId: auth.userId,
       storageId: args.storageId,
       status: "pending",
       amount: args.amount,
       paymentMethod: args.paymentMethod?.trim(),
       transactionRef: args.transactionRef?.trim(),
+      receiptType: "zelle",
       linkedLedgerItems: args.ledgerItemIds,
       createdAt: now,
     });
 
+    // If cash option selected, create a second receipt for the cash balance
+    let cashReceiptId: Id<"receipts"> | undefined;
+    if (isCashOption) {
+      cashReceiptId = await ctx.db.insert("receipts", {
+        userId: auth.userId,
+        // No storageId - cash receipts have no image
+        status: "pending",
+        amount: args.cashBalanceAmount!,
+        paymentMethod: "cash",
+        receiptType: "cash",
+        relatedReceiptId: zelleReceiptId,  // Link to Zelle deposit
+        linkedLedgerItems: args.ledgerItemIds,  // Same items
+        createdAt: now,
+      });
+    }
+
     // Update all linked items to secured status
+    // Link to Zelle receipt (primary receipt)
     for (const itemId of args.ledgerItemIds) {
       await ctx.db.patch(itemId, {
         status: "secured",
-        receiptId,
+        receiptId: zelleReceiptId,
         updatedAt: now,
       });
     }
@@ -103,39 +83,40 @@ export const submitReceipt = mutation({
     await ctx.db.insert("activityLog", {
       userId: auth.userId,
       targetType: "receipt",
-      targetId: receiptId,
+      targetId: zelleReceiptId,
       action: "submitted",
-      details: `Amount: $${args.amount}, Items: ${args.ledgerItemIds.length}`,
+      details: isCashOption
+        ? `Zelle deposit: $${args.amount}, Cash balance: $${args.cashBalanceAmount}, Items: ${args.ledgerItemIds.length}`
+        : `Amount: $${args.amount}, Items: ${args.ledgerItemIds.length}`,
       createdAt: now,
     });
 
-    return { receiptId };
+    return {
+      receiptId: zelleReceiptId,
+      cashReceiptId,
+    };
   },
 });
 
 // QUERY: Get user's receipts
 export const getReceipts = query({
   args: {
-    token: v.string(),
     status: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
-    if (!auth) {
-      throw new Error("Not authenticated");
-    }
+    const auth = await requireAuth(ctx);
 
     const receipts = args.status
       ? await ctx.db
           .query("receipts")
-          .withIndex("by_userId_status", (q: any) =>
-            q.eq("userId", auth.userId).eq("status", args.status)
+          .withIndex("by_userId_status", (q) =>
+            q.eq("userId", auth.userId).eq("status", args.status as "pending" | "verified" | "denied")
           )
           .order("desc")
           .collect()
       : await ctx.db
           .query("receipts")
-          .withIndex("by_userId", (q: any) => q.eq("userId", auth.userId))
+          .withIndex("by_userId", (q) => q.eq("userId", auth.userId))
           .order("desc")
           .collect();
 
@@ -156,11 +137,10 @@ export const getReceipts = query({
 // QUERY: Get single receipt with details
 export const getReceipt = query({
   args: {
-    token: v.string(),
     receiptId: v.id("receipts"),
   },
   handler: async (ctx, args) => {
-    const auth = await getAuthenticatedUser(ctx, args.token);
+    const auth = await getAuthenticatedUser(ctx);
     if (!auth) {
       throw new Error("Not authenticated");
     }
@@ -218,6 +198,9 @@ export const getReceipt = query({
       paymentMethod: receipt.paymentMethod,
       transactionRef: receipt.transactionRef,
       storageId: receipt.storageId,
+      receiptType: receipt.receiptType || "zelle",  // Default to zelle for existing receipts
+      hasImage: !!receipt.storageId,
+      relatedReceiptId: receipt.relatedReceiptId,
       linkedItems: linkedItems.filter(Boolean),
       adminNotes: receipt.adminNotes,
       denialReason: receipt.denialReason,
@@ -230,9 +213,9 @@ export const getReceipt = query({
 
 // ADMIN: List all pending receipts
 export const listPendingReceipts = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
 
     const receipts = await ctx.db
       .query("receipts")
@@ -251,6 +234,9 @@ export const listPendingReceipts = query({
           transactionRef: receipt.transactionRef,
           itemCount: receipt.linkedLedgerItems.length,
           createdAt: receipt.createdAt,
+          receiptType: receipt.receiptType || "zelle",  // Default to zelle for existing receipts
+          hasImage: !!receipt.storageId,
+          relatedReceiptId: receipt.relatedReceiptId,
           user: user ? {
             id: user._id,
             email: user.email,
@@ -266,17 +252,16 @@ export const listPendingReceipts = query({
 // ADMIN: List all receipts with filters
 export const listReceipts = query({
   args: {
-    token: v.string(),
     status: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+    await requireAdmin(ctx);
 
     const limit = args.limit || 50;
 
     const receipts = args.status
-      ? await ctx.db.query("receipts").withIndex("by_status", (q: any) => q.eq("status", args.status)).order("desc").take(limit)
+      ? await ctx.db.query("receipts").withIndex("by_status", (q) => q.eq("status", args.status as "pending" | "verified" | "denied")).order("desc").take(limit)
       : await ctx.db.query("receipts").order("desc").take(limit);
 
     return Promise.all(
@@ -305,9 +290,9 @@ export const listReceipts = query({
 
 // ADMIN: Get receipt stats
 export const getReceiptStats = query({
-  args: { token: v.string() },
-  handler: async (ctx, args) => {
-    await requireAdmin(ctx, args.token);
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
 
     const receipts = await ctx.db.query("receipts").collect();
 

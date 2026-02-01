@@ -4,8 +4,8 @@ import { useAuth } from "../../../lib/AuthContext";
 import { Link } from "react-router-dom";
 
 export function OrderList() {
-  const { token } = useAuth();
-  const orders = useQuery(api.admin.getVerifiedOrders, token ? { token } : "skip");
+  const { isAuthenticated } = useAuth();
+  const orders = useQuery(api.admin.getVerifiedOrders, isAuthenticated ? {} : "skip");
 
   if (!orders) {
     return <div className="animate-pulse bg-white rounded-xl shadow-md p-6 h-48"></div>;
