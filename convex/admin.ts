@@ -90,12 +90,31 @@ export const verifyReceipt = mutation({
           updatedAt: now,
         });
 
-        // Increment session enrollment count for enrollment items
+        // Update session enrollment count for enrollment items
+        // Count from source of truth to prevent lost updates in race conditions
         if (item.type === "enrollment" && item.sessionId) {
           const session = await ctx.db.get(item.sessionId);
           if (session) {
+            // Count all verified enrollments for this session (source of truth)
+            const verifiedEnrollments = await ctx.db
+              .query("ledgerItems")
+              .withIndex("by_sessionId", (q) => q.eq("sessionId", item.sessionId))
+              .filter((q) =>
+                q.and(
+                  q.eq(q.field("type"), "enrollment"),
+                  q.eq(q.field("status"), "verified")
+                )
+              )
+              .collect();
+
+            // Check capacity before allowing verification (hard enforcement)
+            if (verifiedEnrollments.length > session.capacity) {
+              throw new Error(`Session "${session.name}" has reached capacity. Cannot verify enrollment.`);
+            }
+
+            // Set enrolledCount to actual count (not increment) to prevent drift
             await ctx.db.patch(item.sessionId, {
-              enrolledCount: session.enrolledCount + 1,
+              enrolledCount: verifiedEnrollments.length,
               updatedAt: now,
             });
           }

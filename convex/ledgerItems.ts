@@ -108,20 +108,34 @@ export const addToLedger = mutation({
       throw new Error("Session is not available");
     }
 
-    // Check capacity (including secured items)
-    const enrolledItems = await ctx.db
+    // Check capacity (including reserved and secured items to prevent race conditions)
+    const claimedItems = await ctx.db
       .query("ledgerItems")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .filter((q) =>
         q.or(
           q.eq(q.field("status"), "verified"),
-          q.eq(q.field("status"), "secured")
+          q.eq(q.field("status"), "secured"),
+          q.eq(q.field("status"), "reserved")
         )
       )
       .collect();
 
-    if (enrolledItems.length >= session.capacity) {
+    if (claimedItems.length >= session.capacity) {
       throw new Error("Session is full");
+    }
+
+    // Add soft buffer for high-traffic protection (reject when within 2 spots of capacity)
+    // This gives headroom for in-flight reservations
+    const HIGH_TRAFFIC_BUFFER = 2;
+    const draftItems = await ctx.db
+      .query("ledgerItems")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
+      .filter((q) => q.eq(q.field("status"), "draft"))
+      .collect();
+
+    if (claimedItems.length + draftItems.length >= session.capacity + HIGH_TRAFFIC_BUFFER) {
+      throw new Error("Session is nearly full, please try again");
     }
 
     // Check if user already has this session in their ledger
@@ -350,12 +364,25 @@ export const cancelItem = mutation({
       updatedAt: now,
     });
 
-    // If it was verified, decrement the session enrollment count
+    // If it was verified, recalculate session enrollment count from source of truth
     if (item.status === "verified" && item.sessionId) {
       const session = await ctx.db.get(item.sessionId) as Doc<"sessions"> | null;
       if (session) {
+        // Count verified enrollments (excluding the one being cancelled)
+        const verifiedEnrollments = await ctx.db
+          .query("ledgerItems")
+          .withIndex("by_sessionId", (q) => q.eq("sessionId", item.sessionId))
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("type"), "enrollment"),
+              q.eq(q.field("status"), "verified"),
+              q.neq(q.field("_id"), args.itemId) // Exclude current item
+            )
+          )
+          .collect();
+
         await ctx.db.patch(item.sessionId, {
-          enrolledCount: Math.max(0, session.enrolledCount - 1),
+          enrolledCount: verifiedEnrollments.length,
           updatedAt: now,
         });
       }
