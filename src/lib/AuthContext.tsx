@@ -1,8 +1,7 @@
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
-import { useQuery } from "convex/react";
+import { useQuery, useConvexAuth } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
-import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
 import { api } from "../../convex/_generated/api";
 
 interface User {
@@ -36,9 +35,15 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-function AuthProviderInner({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const { isLoading, isAuthenticated } = useConvexAuth();
   const { signIn, signOut } = useAuthActions();
-  const currentUser = useQuery(api.users.currentUser);
+
+  // Only query currentUser when authenticated
+  const currentUser = useQuery(
+    api.users.currentUser,
+    isAuthenticated ? {} : "skip"
+  );
 
   const handleSignIn = async (provider: "google") => {
     await signIn(provider, { redirectTo: "/" });
@@ -65,8 +70,8 @@ function AuthProviderInner({ children }: { children: ReactNode }) {
   const value: AuthContextType = {
     user,
     userId: currentUser?.id ?? null,
-    isLoading: false,
-    isAuthenticated: !!currentUser,
+    isLoading,
+    isAuthenticated,
     isAdmin: currentUser?.role === "admin",
     signIn: handleSignIn,
     signOut: handleSignOut,
@@ -76,78 +81,6 @@ function AuthProviderInner({ children }: { children: ReactNode }) {
     <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
-  );
-}
-
-function AuthProviderLoading({ children }: { children: ReactNode }) {
-  const { signIn, signOut } = useAuthActions();
-
-  const handleSignIn = async (provider: "google") => {
-    await signIn(provider, { redirectTo: "/" });
-  };
-
-  const handleSignOut = async () => {
-    await signOut();
-  };
-
-  const value: AuthContextType = {
-    user: null,
-    userId: null,
-    isLoading: true,
-    isAuthenticated: false,
-    isAdmin: false,
-    signIn: handleSignIn,
-    signOut: handleSignOut,
-  };
-
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
-}
-
-function AuthProviderUnauthenticated({ children }: { children: ReactNode }) {
-  const { signIn, signOut } = useAuthActions();
-
-  const handleSignIn = async (provider: "google") => {
-    await signIn(provider, { redirectTo: "/" });
-  };
-
-  const handleSignOut = async () => {
-    await signOut();
-  };
-
-  const value: AuthContextType = {
-    user: null,
-    userId: null,
-    isLoading: false,
-    isAuthenticated: false,
-    isAdmin: false,
-    signIn: handleSignIn,
-    signOut: handleSignOut,
-  };
-
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
-}
-
-export function AuthProvider({ children }: { children: ReactNode }) {
-  return (
-    <>
-      <AuthLoading>
-        <AuthProviderLoading>{children}</AuthProviderLoading>
-      </AuthLoading>
-      <Unauthenticated>
-        <AuthProviderUnauthenticated>{children}</AuthProviderUnauthenticated>
-      </Unauthenticated>
-      <Authenticated>
-        <AuthProviderInner>{children}</AuthProviderInner>
-      </Authenticated>
-    </>
   );
 }
 
