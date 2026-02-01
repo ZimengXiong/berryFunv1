@@ -173,9 +173,9 @@ export const seedDatabase = action({
 
     // Hash passwords
     const adminHash = await bcrypt.hash("admin", 12);
-    const user1Hash = await bcrypt.hash("user1", 12);
+    const userHash = await bcrypt.hash("user", 12);
 
-    // Create admin user
+    // Create admin users
     await ctx.runMutation(api.seed.createSeedUser, {
       email: "admin@berryfun.com",
       passwordHash: adminHash,
@@ -184,10 +184,18 @@ export const seedDatabase = action({
       role: "admin",
     });
 
+    await ctx.runMutation(api.seed.createSeedUser, {
+      email: "admin2@berryfun.com",
+      passwordHash: adminHash,
+      firstName: "Admin",
+      lastName: "Two",
+      role: "admin",
+    });
+
     // Create regular user
     await ctx.runMutation(api.seed.createSeedUser, {
-      email: "user1@berryfun.com",
-      passwordHash: user1Hash,
+      email: "user@berryfun.com",
+      passwordHash: userHash,
       firstName: "Test",
       lastName: "User",
       role: "user",
