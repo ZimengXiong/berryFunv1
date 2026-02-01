@@ -67,10 +67,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     image: currentUser.image,
   } : null;
 
+  // isLoading should be true until both auth state AND user data are resolved
+  const isUserLoading = isLoading || (isAuthenticated && currentUser === undefined);
+
   const value: AuthContextType = {
     user,
     userId: currentUser?.id ?? null,
-    isLoading,
+    isLoading: isUserLoading,
     isAuthenticated,
     isAdmin: currentUser?.role === "admin",
     signIn: handleSignIn,
