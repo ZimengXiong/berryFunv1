@@ -2,6 +2,21 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireAuth } from "./authHelpers";
 
+// Security: Input validation constants
+const MAX_NAME_LENGTH = 100;
+const MAX_ALLERGIES_LENGTH = 500;
+const MAX_MEDICAL_NOTES_LENGTH = 1000;
+const MAX_PHONE_LENGTH = 20;
+const MAX_RELATIONSHIP_LENGTH = 50;
+
+/**
+ * Sanitize string input with max length
+ */
+function sanitize(input: string | undefined, maxLength: number): string | undefined {
+  if (input === undefined) return undefined;
+  return input.trim().slice(0, maxLength);
+}
+
 // QUERY: Get all children for current user
 export const getChildren = query({
   args: {},
@@ -43,16 +58,28 @@ export const addChild = mutation({
   handler: async (ctx, args) => {
     const auth = await requireAuth(ctx);
 
+    // Validate required fields
+    const firstName = args.firstName.trim().slice(0, MAX_NAME_LENGTH);
+    const lastName = args.lastName.trim().slice(0, MAX_NAME_LENGTH);
+
+    if (firstName.length === 0 || lastName.length === 0) {
+      throw new Error("First name and last name are required");
+    }
+
     const now = Date.now();
 
     const childId = await ctx.db.insert("children", {
       parentId: auth.userId,
-      firstName: args.firstName.trim(),
-      lastName: args.lastName.trim(),
+      firstName,
+      lastName,
       dateOfBirth: args.dateOfBirth,
-      allergies: args.allergies?.trim(),
-      medicalNotes: args.medicalNotes?.trim(),
-      emergencyContact: args.emergencyContact,
+      allergies: sanitize(args.allergies, MAX_ALLERGIES_LENGTH),
+      medicalNotes: sanitize(args.medicalNotes, MAX_MEDICAL_NOTES_LENGTH),
+      emergencyContact: args.emergencyContact ? {
+        name: args.emergencyContact.name.trim().slice(0, MAX_NAME_LENGTH),
+        phone: args.emergencyContact.phone.trim().slice(0, MAX_PHONE_LENGTH),
+        relationship: args.emergencyContact.relationship.trim().slice(0, MAX_RELATIONSHIP_LENGTH),
+      } : undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -93,12 +120,35 @@ export const updateChild = mutation({
       updatedAt: Date.now(),
     };
 
-    if (args.firstName !== undefined) updates.firstName = args.firstName.trim();
-    if (args.lastName !== undefined) updates.lastName = args.lastName.trim();
+    // Validate and sanitize inputs
+    if (args.firstName !== undefined) {
+      const firstName = args.firstName.trim().slice(0, MAX_NAME_LENGTH);
+      if (firstName.length === 0) {
+        throw new Error("First name cannot be empty");
+      }
+      updates.firstName = firstName;
+    }
+    if (args.lastName !== undefined) {
+      const lastName = args.lastName.trim().slice(0, MAX_NAME_LENGTH);
+      if (lastName.length === 0) {
+        throw new Error("Last name cannot be empty");
+      }
+      updates.lastName = lastName;
+    }
     if (args.dateOfBirth !== undefined) updates.dateOfBirth = args.dateOfBirth;
-    if (args.allergies !== undefined) updates.allergies = args.allergies?.trim();
-    if (args.medicalNotes !== undefined) updates.medicalNotes = args.medicalNotes?.trim();
-    if (args.emergencyContact !== undefined) updates.emergencyContact = args.emergencyContact;
+    if (args.allergies !== undefined) {
+      updates.allergies = sanitize(args.allergies, MAX_ALLERGIES_LENGTH);
+    }
+    if (args.medicalNotes !== undefined) {
+      updates.medicalNotes = sanitize(args.medicalNotes, MAX_MEDICAL_NOTES_LENGTH);
+    }
+    if (args.emergencyContact !== undefined) {
+      updates.emergencyContact = {
+        name: args.emergencyContact.name.trim().slice(0, MAX_NAME_LENGTH),
+        phone: args.emergencyContact.phone.trim().slice(0, MAX_PHONE_LENGTH),
+        relationship: args.emergencyContact.relationship.trim().slice(0, MAX_RELATIONSHIP_LENGTH),
+      };
+    }
 
     await ctx.db.patch(args.childId, updates);
 

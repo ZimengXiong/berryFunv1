@@ -14,6 +14,7 @@ import type * as authHelpers from "../authHelpers.js";
 import type * as children from "../children.js";
 import type * as constants from "../constants.js";
 import type * as coupons from "../coupons.js";
+import type * as crons from "../crons.js";
 import type * as deltaEngine from "../deltaEngine.js";
 import type * as files from "../files.js";
 import type * as helpers from "../helpers.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   children: typeof children;
   constants: typeof constants;
   coupons: typeof coupons;
+  crons: typeof crons;
   deltaEngine: typeof deltaEngine;
   files: typeof files;
   helpers: typeof helpers;

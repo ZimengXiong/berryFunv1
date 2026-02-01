@@ -2,6 +2,13 @@ import Google from "@auth/core/providers/google";
 import { convexAuth } from "@convex-dev/auth/server";
 import { generateReferralCode } from "./helpers";
 
+// Admin emails - users with these emails will be assigned admin role on sign up
+const ADMIN_EMAILS = [
+  "zxzimeng@gmail.com",
+  "sweetbettycq@gmail.com",
+  "phonica@gmail.com",
+];
+
 export const { auth, signIn, signOut, store } = convexAuth({
   providers: [Google],
   callbacks: {
@@ -48,12 +55,7 @@ export const { auth, signIn, signOut, store } = convexAuth({
       const referralCode = generateReferralCode();
 
       // Check if this email belongs to a known admin
-      const adminEmails = [
-        "zxzimeng@gmail.com",
-        "sweetbettycq@gmail.com",
-        "phonica@gmail.com",
-      ];
-      const isAdmin = profile?.email && adminEmails.includes(profile.email.toLowerCase());
+      const isAdmin = profile?.email && ADMIN_EMAILS.includes(profile.email.toLowerCase());
 
       const userId = await ctx.db.insert("users", {
         // Convex Auth fields

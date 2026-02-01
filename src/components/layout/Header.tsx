@@ -2,11 +2,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
 
 export function Header() {
-  const { user, isAuthenticated, isAdmin, logout } = useAuth();
+  const { user, isAuthenticated, isAdmin, signOut } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
-    await logout();
+    await signOut();
     navigate("/");
   };
 
@@ -66,20 +66,12 @@ export function Header() {
                 </button>
               </>
             ) : (
-              <>
-                <Link
-                  to="/login"
-                  className="text-gray-600 hover:text-berry-600 transition-colors"
-                >
-                  Login
-                </Link>
-                <Link
-                  to="/register"
-                  className="bg-berry-600 hover:bg-berry-700 text-white px-4 py-2 rounded-lg transition-colors"
-                >
-                  Register
-                </Link>
-              </>
+              <Link
+                to="/login"
+                className="bg-berry-600 hover:bg-berry-700 text-white px-4 py-2 rounded-lg transition-colors"
+              >
+                Sign In
+              </Link>
             )}
           </div>
         </div>

@@ -48,7 +48,7 @@ export function ProfileView({ onEdit }: ProfileViewProps) {
         <div>
           <h3 className="text-sm font-medium text-gray-500 mb-1">Member Since</h3>
           <p className="text-gray-900">
-            {new Date(profile.createdAt).toLocaleDateString()}
+            {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : "N/A"}
           </p>
         </div>
 

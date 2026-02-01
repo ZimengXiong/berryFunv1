@@ -31,12 +31,12 @@ export function UserDetail({ userId }: UserDetailProps) {
 
   const handleEdit = () => {
     setFormData({
-      firstName: user.firstName,
-      lastName: user.lastName,
-      isReturning: user.isReturning,
+      firstName: user.firstName ?? "",
+      lastName: user.lastName ?? "",
+      isReturning: user.isReturning ?? false,
       siblingGroupId: user.siblingGroupId || "",
-      role: user.role,
-      isActive: user.isActive,
+      role: user.role ?? "user",
+      isActive: user.isActive ?? true,
     });
     setIsEditing(true);
   };
@@ -197,7 +197,7 @@ export function UserDetail({ userId }: UserDetailProps) {
             </div>
             <div>
               <h4 className="text-sm font-medium text-gray-500">Joined</h4>
-              <p className="text-gray-900">{new Date(user.createdAt).toLocaleDateString()}</p>
+              <p className="text-gray-900">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "N/A"}</p>
             </div>
           </div>
         )}

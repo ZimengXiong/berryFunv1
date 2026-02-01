@@ -3,6 +3,21 @@ import { mutation, query } from "./_generated/server";
 import { getAuthenticatedUser, requireAdmin, requireAuth } from "./authHelpers";
 import type { Doc } from "./_generated/dataModel";
 
+// Security: Input validation constants
+const MAX_NAME_LENGTH = 100;
+const MAX_PHONE_LENGTH = 20;
+const MAX_ADDRESS_FIELD_LENGTH = 200;
+const MAX_SEARCH_LENGTH = 100;
+const MAX_SIBLING_GROUP_ID_LENGTH = 50;
+
+/**
+ * Validate and sanitize string input
+ */
+function sanitizeString(input: string | undefined, maxLength: number): string | undefined {
+  if (input === undefined) return undefined;
+  return input.trim().slice(0, maxLength);
+}
+
 // QUERY: Get current user profile
 export const getProfile = query({
   args: {},
@@ -55,10 +70,24 @@ export const updateProfile = mutation({
       updatedAt: Date.now(),
     };
 
-    if (args.firstName !== undefined) updates.firstName = args.firstName.trim();
-    if (args.lastName !== undefined) updates.lastName = args.lastName.trim();
-    if (args.phone !== undefined) updates.phone = args.phone?.trim();
-    if (args.address !== undefined) updates.address = args.address;
+    // Validate and sanitize inputs
+    if (args.firstName !== undefined) {
+      updates.firstName = sanitizeString(args.firstName, MAX_NAME_LENGTH);
+    }
+    if (args.lastName !== undefined) {
+      updates.lastName = sanitizeString(args.lastName, MAX_NAME_LENGTH);
+    }
+    if (args.phone !== undefined) {
+      updates.phone = sanitizeString(args.phone, MAX_PHONE_LENGTH);
+    }
+    if (args.address !== undefined) {
+      updates.address = {
+        street: args.address.street.trim().slice(0, MAX_ADDRESS_FIELD_LENGTH),
+        city: args.address.city.trim().slice(0, MAX_ADDRESS_FIELD_LENGTH),
+        state: args.address.state.trim().slice(0, MAX_ADDRESS_FIELD_LENGTH),
+        zip: args.address.zip.trim().slice(0, 20),
+      };
+    }
 
     await ctx.db.patch(auth.userId, updates);
 
@@ -77,7 +106,11 @@ export const listUsers = query({
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
 
-    const limit = args.limit || 20;
+    // Validate limit to prevent resource exhaustion
+    const limit = Math.min(Math.max(args.limit || 20, 1), 100);
+
+    // Sanitize search input
+    const search = args.search?.trim().slice(0, MAX_SEARCH_LENGTH);
 
     const users = args.role
       ? await ctx.db.query("users").withIndex("by_role", (q) => q.eq("role", args.role!)).order("desc").take(limit + 1)
@@ -86,10 +119,10 @@ export const listUsers = query({
     const hasMore = users.length > limit;
     const results = hasMore ? users.slice(0, limit) : users;
 
-    // Filter by search if provided
+    // Filter by search if provided (using sanitized search)
     let filteredResults = results;
-    if (args.search) {
-      const searchLower = args.search.toLowerCase();
+    if (search) {
+      const searchLower = search.toLowerCase();
       filteredResults = results.filter((user) =>
         (user.email?.toLowerCase().includes(searchLower)) ||
         (user.firstName?.toLowerCase().includes(searchLower)) ||
@@ -183,23 +216,40 @@ export const updateUser = mutation({
       updatedAt: Date.now(),
     };
 
-    if (args.firstName !== undefined) updates.firstName = args.firstName.trim();
-    if (args.lastName !== undefined) updates.lastName = args.lastName.trim();
-    if (args.phone !== undefined) updates.phone = args.phone?.trim();
+    // Validate and sanitize inputs
+    if (args.firstName !== undefined) {
+      updates.firstName = sanitizeString(args.firstName, MAX_NAME_LENGTH);
+    }
+    if (args.lastName !== undefined) {
+      updates.lastName = sanitizeString(args.lastName, MAX_NAME_LENGTH);
+    }
+    if (args.phone !== undefined) {
+      updates.phone = sanitizeString(args.phone, MAX_PHONE_LENGTH);
+    }
     if (args.isReturning !== undefined) updates.isReturning = args.isReturning;
-    if (args.siblingGroupId !== undefined) updates.siblingGroupId = args.siblingGroupId;
+    if (args.siblingGroupId !== undefined) {
+      updates.siblingGroupId = sanitizeString(args.siblingGroupId, MAX_SIBLING_GROUP_ID_LENGTH);
+    }
     if (args.role !== undefined) updates.role = args.role;
     if (args.isActive !== undefined) updates.isActive = args.isActive;
 
     await ctx.db.patch(args.userId, updates);
 
-    // Log activity
+    // Log activity (redact sensitive data from logs)
+    const logDetails: Record<string, unknown> = {};
+    if (args.isReturning !== undefined) logDetails.isReturning = args.isReturning;
+    if (args.role !== undefined) logDetails.role = args.role;
+    if (args.isActive !== undefined) logDetails.isActive = args.isActive;
+    if (args.firstName !== undefined) logDetails.firstNameUpdated = true;
+    if (args.lastName !== undefined) logDetails.lastNameUpdated = true;
+    if (args.phone !== undefined) logDetails.phoneUpdated = true;
+
     await ctx.db.insert("activityLog", {
       userId: adminId,
       targetType: "user",
       targetId: args.userId,
       action: "updated",
-      details: JSON.stringify(updates),
+      details: JSON.stringify(logDetails),
       createdAt: Date.now(),
     });
 

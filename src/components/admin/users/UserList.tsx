@@ -106,7 +106,7 @@ export function UserList() {
                   )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {new Date(user.createdAt).toLocaleDateString()}
+                  {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "N/A"}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                   <Link

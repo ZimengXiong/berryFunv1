@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation } from "./_generated/server";
 import { getAuthenticatedUser, requireAuth, requireAdmin } from "./authHelpers";
 import type { Doc, Id } from "./_generated/dataModel";
 import { RESERVATION_EXPIRY_MS, DEPOSIT_PER_WEEK } from "./constants";
@@ -281,10 +281,14 @@ export const reserveItems = mutation({
   },
 });
 
-// MUTATION: Release expired reservations (run periodically)
+// MUTATION: Release expired reservations (admin only - should be called via cron job)
+// Security: This endpoint requires admin authentication to prevent abuse
 export const releaseExpiredReservations = mutation({
   args: {},
   handler: async (ctx) => {
+    // Require admin authentication
+    await requireAdmin(ctx);
+
     const now = Date.now();
 
     // Find expired reservations
@@ -431,5 +435,37 @@ export const getUserLedger = query({
       },
       items: enrichedItems,
     };
+  },
+});
+
+// INTERNAL MUTATION: Release expired reservations (called by cron job)
+// Security: This is an internal mutation that can only be called by other Convex functions
+export const releaseExpiredReservationsInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+
+    // Find expired reservations
+    const expiredItems = await ctx.db
+      .query("ledgerItems")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("status"), "reserved"),
+          q.lt(q.field("reservationExpiresAt"), now)
+        )
+      )
+      .collect();
+
+    for (const item of expiredItems) {
+      await ctx.db.patch(item._id, {
+        status: "draft",
+        paymentMethod: undefined,
+        reservedAt: undefined,
+        reservationExpiresAt: undefined,
+        updatedAt: now,
+      });
+    }
+
+    return { releasedCount: expiredItems.length };
   },
 });

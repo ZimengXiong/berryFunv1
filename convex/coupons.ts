@@ -3,6 +3,10 @@ import { mutation, query } from "./_generated/server";
 import { requireAuth, requireAdmin } from "./authHelpers";
 import type { Doc } from "./_generated/dataModel";
 
+// Security: Input validation constants
+const MAX_COUPON_CODE_LENGTH = 50;
+const MAX_DESCRIPTION_LENGTH = 500;
+
 // MUTATION: Claim a coupon (creates credit memo, locks coupon)
 export const claimCoupon = mutation({
   args: {
@@ -11,7 +15,17 @@ export const claimCoupon = mutation({
   handler: async (ctx, args) => {
     const auth = await requireAuth(ctx);
 
+    // Input validation
+    if (args.code.length > MAX_COUPON_CODE_LENGTH) {
+      throw new Error("Invalid coupon code");
+    }
+
     const couponCode = args.code.toUpperCase().trim();
+
+    // Prevent empty codes
+    if (couponCode.length === 0) {
+      throw new Error("Invalid coupon code");
+    }
 
     // Find the coupon
     const coupon = await ctx.db
@@ -19,28 +33,33 @@ export const claimCoupon = mutation({
       .withIndex("by_code", (q) => q.eq("code", couponCode))
       .first() as Doc<"coupons"> | null;
 
+    // Security: Use consistent error message to prevent coupon enumeration
+    const genericError = "Coupon code is invalid or unavailable";
+
     if (!coupon) {
-      throw new Error("Invalid coupon code");
+      throw new Error(genericError);
     }
 
-    // Check if coupon is available
+    // Check if user already claimed this coupon
+    if (coupon.status === "pending" && coupon.linkedUserId === auth.userId) {
+      throw new Error("You have already claimed this coupon");
+    }
+
+    // Check if coupon is available (use generic error to prevent status enumeration)
     if (coupon.status !== "available") {
-      if (coupon.status === "pending" && coupon.linkedUserId === auth.userId) {
-        throw new Error("You have already claimed this coupon");
-      }
-      throw new Error("Coupon is not available");
+      throw new Error(genericError);
     }
 
-    // Check expiration
+    // Check expiration (use generic error)
     if (coupon.expiresAt && coupon.expiresAt < Date.now()) {
       await ctx.db.patch(coupon._id, { status: "expired", updatedAt: Date.now() });
-      throw new Error("Coupon has expired");
+      throw new Error(genericError);
     }
 
-    // Check max uses
+    // Check max uses (use generic error)
     if (coupon.maxUses && coupon.currentUses >= coupon.maxUses) {
       await ctx.db.patch(coupon._id, { status: "disabled", updatedAt: Date.now() });
-      throw new Error("Coupon has reached maximum uses");
+      throw new Error(genericError);
     }
 
     const now = Date.now();
@@ -150,7 +169,28 @@ export const createCoupon = mutation({
   handler: async (ctx, args) => {
     const adminId = await requireAdmin(ctx);
 
+    // Input validation
+    if (args.code.length > MAX_COUPON_CODE_LENGTH) {
+      throw new Error(`Coupon code must be ${MAX_COUPON_CODE_LENGTH} characters or less`);
+    }
+    if (args.description && args.description.length > MAX_DESCRIPTION_LENGTH) {
+      throw new Error(`Description must be ${MAX_DESCRIPTION_LENGTH} characters or less`);
+    }
+    if (args.discountValue <= 0) {
+      throw new Error("Discount value must be positive");
+    }
+    if (args.discountType === "percentage" && args.discountValue > 100) {
+      throw new Error("Percentage discount cannot exceed 100%");
+    }
+    if (args.maxUses !== undefined && args.maxUses <= 0) {
+      throw new Error("Max uses must be positive");
+    }
+
     const code = args.code.toUpperCase().trim();
+
+    if (code.length === 0) {
+      throw new Error("Coupon code cannot be empty");
+    }
 
     // Check if code already exists
     const existing = await ctx.db
@@ -169,7 +209,7 @@ export const createCoupon = mutation({
       discountValue: args.discountValue,
       discountType: args.discountType,
       status: "available",
-      description: args.description?.trim(),
+      description: args.description?.trim().slice(0, MAX_DESCRIPTION_LENGTH),
       maxUses: args.maxUses,
       currentUses: 0,
       expiresAt: args.expiresAt,
